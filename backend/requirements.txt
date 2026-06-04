@@ -1,0 +1,10 @@
+fastapi==0.124.2
+uvicorn[standard]==0.38.0
+Pillow==12.0.0
+send2trash==1.8.3
+pydantic==2.12.5
+pytest==9.0.2
+httpx==0.28.1
+paddlepaddle==3.2.2
+paddleocr==3.3.2
+rapidocr-onnxruntime==1.4.4
