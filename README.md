@@ -1,10 +1,16 @@
 # ScreenTextOrganizer
-Local screenshot OCR & text organizer
+Local screenshot OCR & text organizer.
+
+[English](#english) | [中文 (Chinese)](#chinese) | [日本語 (Japanese)](#japanese) | [Deutsch (German)](#german)
+
+---
+
+<a id="english"></a>
+## English
 
 Local web tool for reviewing saved screenshots, book excerpts, interview-question images, and other image-based notes.
 
-## Workflow
-
+### Workflow
 1. Scan an image folder.
 2. Generate thumbnails and store metadata in SQLite.
 3. Run OCR to extract text: PaddleOCR first, RapidOCR fallback, Ollama vision fallback when available.
@@ -13,57 +19,167 @@ Local web tool for reviewing saved screenshots, book excerpts, interview-questio
 6. Copy text, edit OCR output, keep, mark for review, or move source images to the Windows recycle bin.
 7. Export JSON or CSV.
 
-## Project Layout
-
+### Project Layout
 - `backend/` FastAPI backend and SQLite storage.
 - `frontend/` Vite React UI.
 - `docs/` research notes and implementation plan.
 - `data/` generated at runtime for SQLite and thumbnails.
 
-## Backend
+### Quick Start
 
+**Backend:**
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --port 8000
 ```
 
-## Frontend
-
+**Frontend:**
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
-
 Open `http://localhost:5173`.
 
-## Optional Ollama
-
+### Optional Ollama
 Install Ollama for Windows from the official installer, then pull the recommended lightweight vision model:
-
 ```powershell
 ollama pull qwen3.5:2b-q4_K_M
-ollama run qwen3.5:2b-q4_K_M "用一句话说明你能做什么"
 ```
-
 The app works without Ollama by falling back to rule-based analysis.
 
-## OCR Model Cache
+### License
+[MIT License](./LICENSE)
 
-PaddleOCR writes model and runtime cache files under `data/paddlex-cache/` and
-`data/paddle-home/` so it does not require write access to the Windows user
-profile. The first OCR run can take a long time while downloading PaddleOCR
-models. If PaddleOCR is unavailable, the backend falls back to RapidOCR and then
-to Ollama vision OCR.
+---
 
-## Smoke Test
+<details>
+<summary><a id="chinese"></a><b>中文 (Chinese)</b></summary>
 
-With the backend running:
+本地网页工具，用于审阅和整理已保存的截图、读书摘录、面试题截图以及其他基于图片的笔记。
 
+### 工作流程
+1. 扫描图片目录。
+2. 生成缩略图并将元数据存储在 SQLite 中。
+3. 运行 OCR 提取文字：首选 PaddleOCR，失败则使用 RapidOCR，如有配置也会使用 Ollama 视觉大模型作为最终后备。
+4. 运行本地规则分析（可选开启 Ollama 增强分析）。
+5. 在浏览器表格中审阅所有图片。
+6. 复制文本、编辑 OCR 结果、保留、标记为待复核，或将原图直接移入 Windows 回收站。
+7. 导出 JSON 或 CSV 数据。
+
+### 目录结构
+- `backend/` FastAPI 后端与 SQLite 数据库存储。
+- `frontend/` Vite + React 界面前端。
+- `docs/` 研究笔记和实现计划。
+- `data/` 运行时生成的目录，存放数据库和缩略图。
+
+### 快速开始
+**后端:**
 ```powershell
 cd backend
-.\.venv\Scripts\python smoke_test.py
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
 ```
+
+**前端:**
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+打开 `http://localhost:5173`。
+
+### 可选: Ollama
+安装官方 Windows 版 Ollama，并拉取推荐的轻量级视觉模型：
+```powershell
+ollama pull qwen3.5:2b-q4_K_M
+```
+如果不使用 Ollama，应用也会自动降级回基于规则的分析模式。
+
+### 开源协议
+[MIT License](./LICENSE)
+
+</details>
+
+---
+
+<details>
+<summary><a id="japanese"></a><b>日本語 (Japanese)</b></summary>
+
+保存したスクリーンショット、本の抜粋、面接問題の画像など、画像ベースのメモをレビューして整理するためのローカルWebツール。
+
+### ワークフロー
+1. 画像フォルダをスキャンする。
+2. サムネイルを生成し、メタデータをSQLiteに保存する。
+3. OCRを実行してテキストを抽出する：PaddleOCRを最初に実行し、RapidOCR、利用可能であればOllamaビジョンモデルの順にフォールバックする。
+4. ローカルのルール分析を実行する（オプションでOllamaによる強化も可能）。
+5. ブラウザのテーブルでアイテムをレビューする。
+6. テキストのコピー、OCR出力の編集、保持、レビュー待ちのマーク付け、または元の画像をWindowsのごみ箱に移動する。
+7. JSONまたはCSVをエクスポートする。
+
+### クイックスタート
+**バックエンド:**
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
+```
+
+**フロントエンド:**
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+`http://localhost:5173` を開く。
+
+### ライセンス
+[MIT License](./LICENSE)
+
+</details>
+
+---
+
+<details>
+<summary><a id="german"></a><b>Deutsch (German)</b></summary>
+
+Ein lokales Web-Tool zum Überprüfen und Organisieren von gespeicherten Screenshots, Buchauszügen, Bildern von Interviewfragen und anderen bildbasierten Notizen.
+
+### Arbeitsablauf
+1. Einen Bilderordner scannen.
+2. Miniaturansichten generieren und Metadaten in SQLite speichern.
+3. OCR ausführen, um Text zu extrahieren: zuerst PaddleOCR, als Fallback RapidOCR und falls verfügbar Ollama-Vision-Modelle.
+4. Lokale Regelanalyse ausführen, optional erweitert durch Ollama.
+5. Elemente in einer Browser-Tabelle überprüfen.
+6. Text kopieren, OCR-Ausgabe bearbeiten, behalten, zur Überprüfung markieren oder Quellbilder in den Windows-Papierkorb verschieben.
+7. JSON oder CSV exportieren.
+
+### Schnellstart
+**Backend:**
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
+```
+
+**Frontend:**
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+Öffnen Sie `http://localhost:5173`.
+
+### Lizenz
+[MIT License](./LICENSE)
+
+</details>
