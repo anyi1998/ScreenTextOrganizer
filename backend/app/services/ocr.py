@@ -9,8 +9,7 @@ from ..config import PADDLE_HOME_DIR, PADDLEX_CACHE_DIR, ensure_runtime_dirs
 from .ollama import ocr_with_ollama
 
 
-_paddle_disabled_error: str | None = None
-_rapid_disabled_error: str | None = None
+
 
 
 @lru_cache(maxsize=1)
@@ -37,32 +36,18 @@ def get_paddle_ocr() -> Any:
 
 
 def run_ocr(image_path: str) -> tuple[str, float | None]:
-    global _paddle_disabled_error, _rapid_disabled_error
     path = str(Path(image_path))
-    if _paddle_disabled_error is not None:
-        rapid = run_rapid_ocr(path)
-        if rapid[0]:
-            return rapid
-        fallback = ocr_with_ollama(path)
-        if fallback:
-            return fallback, None
-        raise RuntimeError(
-            "PaddleOCR unavailable, RapidOCR unavailable, and Ollama OCR fallback failed: "
-            f"{_paddle_disabled_error}; {_rapid_disabled_error}"
-        )
-
     try:
         ocr = get_paddle_ocr()
         result = ocr.ocr(path)
     except Exception as exc:
-        _paddle_disabled_error = str(exc)
         rapid = run_rapid_ocr(path)
         if rapid[0]:
             return rapid
         fallback = ocr_with_ollama(path)
         if fallback:
             return fallback, None
-        raise RuntimeError(f"PaddleOCR unavailable and OCR fallbacks failed: {exc}; {_rapid_disabled_error}") from exc
+        raise RuntimeError(f"PaddleOCR unavailable and OCR fallbacks failed: {exc}") from exc
 
     lines: list[str] = []
     scores: list[float] = []
@@ -94,9 +79,6 @@ def run_ocr(image_path: str) -> tuple[str, float | None]:
 
 
 def run_rapid_ocr(image_path: str) -> tuple[str, float | None]:
-    global _rapid_disabled_error
-    if _rapid_disabled_error is not None:
-        return "", None
     try:
         engine = get_rapid_ocr()
         result, _ = engine(image_path)
@@ -111,6 +93,5 @@ def run_rapid_ocr(image_path: str) -> tuple[str, float | None]:
                 scores.append(float(item[2]))
         confidence = sum(scores) / len(scores) if scores else None
         return "\n".join(line for line in lines if line).strip(), confidence
-    except Exception as exc:
-        _rapid_disabled_error = str(exc)
+    except Exception:
         return "", None
