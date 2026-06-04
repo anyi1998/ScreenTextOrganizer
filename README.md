@@ -1,4 +1,5 @@
-# Pic Text Pull
+# ScreenTextOrganizer
+Local screenshot OCR & text organizer
 
 Local web tool for reviewing saved screenshots, book excerpts, interview-question images, and other image-based notes.
 

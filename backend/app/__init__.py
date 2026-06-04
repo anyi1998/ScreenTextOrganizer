@@ -1,2 +1,2 @@
-"""Pic Text Pull backend."""
+"""ScreenTextOrganizer backend."""
 

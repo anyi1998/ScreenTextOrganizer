@@ -28,7 +28,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="Pic Text Pull", lifespan=lifespan)
+app = FastAPI(title="ScreenTextOrganizer", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

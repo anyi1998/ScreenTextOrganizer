@@ -172,7 +172,7 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <h1>Pic Text Pull</h1>
+          <h1>ScreenTextOrganizer</h1>
           <p>本地截图文字整理、识别和审阅</p>
         </div>
         <div className="topbar-actions">
