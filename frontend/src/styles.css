@@ -925,3 +925,108 @@ tbody tr:nth-child(even):hover {
     padding: 14px 16px 20px;
   }
 }
+
+/* ---------- Status Indicators ---------- */
+.status-indicators {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: "Fira Code", ui-monospace, monospace;
+  border: 1px solid transparent;
+}
+
+.status-dot.good {
+  color: var(--good);
+  background: var(--good-bg);
+  border-color: var(--good-border);
+}
+
+.status-dot.warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+
+.status-dot.neutral {
+  color: var(--text-muted);
+  background: rgba(100, 116, 139, 0.10);
+  border-color: rgba(100, 116, 139, 0.20);
+}
+
+/* ---------- AI Settings Dialog ---------- */
+.settings-dialog {
+  width: min(520px, 100%);
+}
+
+.settings-form {
+  padding: 20px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-field span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+}
+
+.settings-field input[readonly] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-test-result {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  animation: slideDown 0.2s var(--ease);
+}
+
+.settings-test-result.good {
+  color: var(--good);
+  background: var(--good-bg);
+  border: 1px solid var(--good-border);
+}
+
+.settings-test-result.bad {
+  color: var(--bad);
+  background: var(--bad-bg);
+  border: 1px solid var(--bad-border);
+}
+
+/* ---------- Keep Reason ---------- */
+.keep-reason {
+  font-size: 12px !important;
+  color: var(--text-muted) !important;
+  font-style: italic;
+  margin-top: 4px !important;
+}
+
+.risk-line .badge {
+  margin-left: 2px;
+}

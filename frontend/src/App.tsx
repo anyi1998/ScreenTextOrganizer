@@ -14,23 +14,43 @@ import {
   Play,
   RefreshCw,
   Search,
+  Settings,
   Trash2,
   X,
-  Globe
+  Globe,
+  Zap,
+  ZapOff
 } from "lucide-react";
 import {
   exportUrl,
+  getAIConfig,
   getOcrStatus,
+  healthCheck,
   imageUrl,
   listItems,
   runAnalysis,
   runOcr,
+  saveAIConfig,
   scan,
   thumbnailUrl,
   trashItem,
   updateItem
 } from "./api";
-import type { ItemStatus, OcrStatus, PicItem } from "./types";
+import type { AIConfig, HealthInfo, ItemStatus, OcrStatus, PicItem } from "./types";
+
+/* ── Provider presets ─────────────────────────────────────────────── */
+
+const AI_PRESETS: { label: string; base_url: string; models: string[] }[] = [
+  { label: "DeepSeek", base_url: "https://api.deepseek.com", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { label: "OpenAI", base_url: "https://api.openai.com", models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"] },
+  { label: "Kimi (月之暗面)", base_url: "https://api.moonshot.cn", models: ["moonshot-v1-8k", "moonshot-v1-32k"] },
+  { label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas", models: ["glm-4-flash", "glm-4-plus"] },
+  { label: "通义千问", base_url: "https://dashscope.aliyuncs.com/compatible-mode", models: ["qwen-turbo", "qwen-plus"] },
+  { label: "硅基流动", base_url: "https://api.siliconflow.cn", models: ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-7B-Instruct"] },
+  { label: "自定义", base_url: "", models: [] },
+];
+
+/* ── Translations ─────────────────────────────────────────────────── */
 
 const translations = {
   zh: {
@@ -45,7 +65,7 @@ const translations = {
     status: "状态",
     suggestion: "建议",
     category: "分类",
-    withImg: "带图",
+    provider: "AI 引擎",
     refresh: "刷新",
     total: "共",
     items: "条",
@@ -61,8 +81,9 @@ const translations = {
     empty: "暂无数据 — 输入图片目录并点击「扫描」开始",
     unrecognized: "未识别",
     unanalyzed: "未分析",
-    outdated: "过时",
-    distorted: "失真",
+    topic: "话题",
+    ocrQuality: "OCR",
+    reason: "理由",
     exportJson: "导出 JSON",
     exportCsv: "导出 CSV",
     perPage: "每页显示",
@@ -89,6 +110,23 @@ const translations = {
     tooltipKeep: "保留",
     tooltipReview: "待复核",
     tooltipTrash: "移入回收站",
+    settings: "AI 设置",
+    settingsTitle: "AI 分析设置",
+    presetLabel: "服务商预设",
+    apiKeyLabel: "API Key",
+    apiKeyPlaceholder: "sk-...",
+    baseUrlLabel: "API 地址",
+    modelLabel: "模型",
+    testConn: "测试连接",
+    connOk: "✓ 连接成功",
+    connFail: "✗ 连接失败",
+    aiConnected: "AI 已连接",
+    aiNotConfigured: "AI 未配置",
+    ollamaConnected: "Ollama 可用",
+    providerAuto: "自动（推荐）",
+    providerAI: "在线 AI",
+    providerOllama: "Ollama (本地)",
+    providerRules: "仅规则",
   },
   en: {
     subtitle: "Local screenshot OCR, text organizer and reviewer",
@@ -102,7 +140,7 @@ const translations = {
     status: "Status",
     suggestion: "Suggestion",
     category: "Category",
-    withImg: "With Image",
+    provider: "AI Engine",
     refresh: "Refresh",
     total: "Total",
     items: "items",
@@ -118,8 +156,9 @@ const translations = {
     empty: "No data — Enter an image directory and click 'Scan' to start",
     unrecognized: "Not recognized",
     unanalyzed: "Not analyzed",
-    outdated: "Outdated",
-    distorted: "Distorted",
+    topic: "Topic",
+    ocrQuality: "OCR",
+    reason: "Reason",
     exportJson: "Export JSON",
     exportCsv: "Export CSV",
     perPage: "Per Page",
@@ -146,6 +185,23 @@ const translations = {
     tooltipKeep: "Keep",
     tooltipReview: "Mark for review",
     tooltipTrash: "Move to Trash",
+    settings: "AI Settings",
+    settingsTitle: "AI Analysis Settings",
+    presetLabel: "Provider Preset",
+    apiKeyLabel: "API Key",
+    apiKeyPlaceholder: "sk-...",
+    baseUrlLabel: "API URL",
+    modelLabel: "Model",
+    testConn: "Test Connection",
+    connOk: "✓ Connected",
+    connFail: "✗ Connection failed",
+    aiConnected: "AI Connected",
+    aiNotConfigured: "AI Not Configured",
+    ollamaConnected: "Ollama Available",
+    providerAuto: "Auto (Recommended)",
+    providerAI: "Online AI",
+    providerOllama: "Ollama (Local)",
+    providerRules: "Rules Only",
   },
   ja: {
     subtitle: "ローカルスクリーンショットOCR、テキスト整理・レビューツール",
@@ -159,7 +215,7 @@ const translations = {
     status: "ステータス",
     suggestion: "提案",
     category: "カテゴリ",
-    withImg: "画像付き",
+    provider: "AIエンジン",
     refresh: "更新",
     total: "合計",
     items: "件",
@@ -175,8 +231,9 @@ const translations = {
     empty: "データがありません — 画像ディレクトリを入力し「スキャン」をクリック",
     unrecognized: "未認識",
     unanalyzed: "未分析",
-    outdated: "古い",
-    distorted: "歪み",
+    topic: "トピック",
+    ocrQuality: "OCR",
+    reason: "理由",
     exportJson: "JSON出力",
     exportCsv: "CSV出力",
     perPage: "表示件数",
@@ -203,6 +260,23 @@ const translations = {
     tooltipKeep: "保持",
     tooltipReview: "レビュー待ち",
     tooltipTrash: "ごみ箱へ移動",
+    settings: "AI設定",
+    settingsTitle: "AI分析設定",
+    presetLabel: "プロバイダプリセット",
+    apiKeyLabel: "APIキー",
+    apiKeyPlaceholder: "sk-...",
+    baseUrlLabel: "API URL",
+    modelLabel: "モデル",
+    testConn: "接続テスト",
+    connOk: "✓ 接続成功",
+    connFail: "✗ 接続失敗",
+    aiConnected: "AI接続済み",
+    aiNotConfigured: "AI未設定",
+    ollamaConnected: "Ollama利用可能",
+    providerAuto: "自動（推奨）",
+    providerAI: "オンラインAI",
+    providerOllama: "Ollama（ローカル）",
+    providerRules: "ルールのみ",
   },
   de: {
     subtitle: "Lokaler Screenshot OCR, Textorganisator und Reviewer",
@@ -216,7 +290,7 @@ const translations = {
     status: "Status",
     suggestion: "Vorschlag",
     category: "Kategorie",
-    withImg: "Mit Bild",
+    provider: "KI-Engine",
     refresh: "Aktualisieren",
     total: "Gesamt",
     items: "Einträge",
@@ -232,8 +306,9 @@ const translations = {
     empty: "Keine Daten — Geben Sie ein Bildverzeichnis ein und klicken Sie auf 'Scannen'",
     unrecognized: "Nicht erkannt",
     unanalyzed: "Nicht analysiert",
-    outdated: "Veraltet",
-    distorted: "Verzerrt",
+    topic: "Thema",
+    ocrQuality: "OCR",
+    reason: "Grund",
     exportJson: "JSON Export",
     exportCsv: "CSV Export",
     perPage: "Pro Seite",
@@ -260,6 +335,23 @@ const translations = {
     tooltipKeep: "Behalten",
     tooltipReview: "Zur Überprüfung",
     tooltipTrash: "In den Papierkorb",
+    settings: "KI-Einstellungen",
+    settingsTitle: "KI-Analyse Einstellungen",
+    presetLabel: "Anbieter-Voreinstellung",
+    apiKeyLabel: "API-Schlüssel",
+    apiKeyPlaceholder: "sk-...",
+    baseUrlLabel: "API-URL",
+    modelLabel: "Modell",
+    testConn: "Verbindung testen",
+    connOk: "✓ Verbunden",
+    connFail: "✗ Verbindung fehlgeschlagen",
+    aiConnected: "KI verbunden",
+    aiNotConfigured: "KI nicht konfiguriert",
+    ollamaConnected: "Ollama verfügbar",
+    providerAuto: "Auto (Empfohlen)",
+    providerAI: "Online-KI",
+    providerOllama: "Ollama (Lokal)",
+    providerRules: "Nur Regeln",
   }
 };
 
@@ -274,7 +366,6 @@ export function App() {
   const [recursive, setRecursive] = useState(true);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
-  const [category, setCategory] = useState("");
   const [suggestion, setSuggestion] = useState("");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<PicItem[]>([]);
@@ -284,10 +375,18 @@ export function App() {
   const [selected, setSelected] = useState<PicItem | null>(null);
   const [editing, setEditing] = useState<PicItem | null>(null);
   const [editText, setEditText] = useState("");
-  const [useOllama, setUseOllama] = useState(false);
+  const [provider, setProvider] = useState("auto");
   const [includeImage, setIncludeImage] = useState(false);
   const [ocrProgress, setOcrProgress] = useState<OcrStatus | null>(null);
   const ocrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Health / connection status
+  const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    healthCheck().then(setHealthInfo).catch(() => {});
+  }, []);
 
   const params = useMemo(() => {
     const next = new URLSearchParams({
@@ -296,10 +395,9 @@ export function App() {
     });
     if (query.trim()) next.set("q", query.trim());
     if (status) next.set("status", status);
-    if (category) next.set("category", category);
     if (suggestion) next.set("suggestion", suggestion);
     return next;
-  }, [page, pageSize, query, status, category, suggestion]);
+  }, [page, pageSize, query, status, suggestion]);
 
   const load = useCallback(async () => {
     const data = await listItems(params);
@@ -374,6 +472,8 @@ export function App() {
       const result = await action();
       setMessage(`${t.msgActionDone} ${JSON.stringify(result)}`);
       await load();
+      // Refresh health after analysis to update connection status
+      healthCheck().then(setHealthInfo).catch(() => {});
     } catch (error) {
       setMessage(`✗ ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -390,7 +490,7 @@ export function App() {
     await runAction(t.actionUpdateStatus, () => updateItem(item.id, { status: nextStatus }));
   }
 
-  async function confirmTrash(item: PicItem) {
+  async function confirmTrashAction(item: PicItem) {
     const ok = window.confirm(`"${item.filename}" — ${t.confirmTrash}`);
     if (!ok) return;
     await runAction(t.actionTrash, () => trashItem(item.id));
@@ -404,6 +504,34 @@ export function App() {
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
+  // Determine AI status combining backend health and local config
+  let aiStatus = "not_configured";
+  try {
+    const isLocalConfigured = !!localStorage.getItem("ai_config");
+    const isLocalAvailable = localStorage.getItem("ai_available") === "true";
+    
+    if (isLocalConfigured) {
+      aiStatus = isLocalAvailable ? "connected" : "error";
+    } else if (healthInfo?.ai_configured) {
+      aiStatus = healthInfo.ai_available ? "connected" : "error";
+    }
+  } catch {
+    if (healthInfo?.ai_configured) {
+      aiStatus = healthInfo.ai_available ? "connected" : "error";
+    }
+  }
+
+  // Get local config for display and execution
+  let currentModel = healthInfo?.ai_model || "";
+  let localConf: any = null;
+  try {
+    const saved = localStorage.getItem("ai_config");
+    if (saved) {
+      localConf = JSON.parse(saved);
+      if (localConf.model) currentModel = localConf.model;
+    }
+  } catch {}
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -412,6 +540,28 @@ export function App() {
           <p>{t.subtitle}</p>
         </div>
         <div className="topbar-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {/* AI Status indicators */}
+          <div className="status-indicators" style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+            {healthInfo && (
+              <>
+                <span className={`status-dot ${aiStatus === "connected" ? "good" : aiStatus === "error" ? "warn" : "neutral"}`}
+                  title={aiStatus === "connected" ? `${t.aiConnected} (${currentModel})` : t.aiNotConfigured}>
+                  <Zap size={12} />
+                  {aiStatus === "connected" ? "AI" : <ZapOff size={12} />}
+                </span>
+                {healthInfo.ollama_available && (
+                  <span className="status-dot good" title={t.ollamaConnected}>
+                    Ollama
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          <button className="icon-button text-button" onClick={() => setShowSettings(true)} title={t.settings}>
+            <Settings size={16} />
+          </button>
+
           <div className="lang-switcher" style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-muted)" }}>
             <Globe size={16} />
             <select
@@ -469,7 +619,13 @@ export function App() {
             disabled={!!busy}
             onClick={() =>
               runAction(t.analyze, () =>
-                runAnalysis({ use_ollama: useOllama, include_image: includeImage })
+                runAnalysis({ 
+                  provider, 
+                  include_image: includeImage,
+                  ai_api_key: localConf?.api_key,
+                  ai_base_url: localConf?.base_url,
+                  ai_model: localConf?.model
+                })
               )
             }
           >
@@ -493,28 +649,13 @@ export function App() {
           <Select label={t.status} value={status} onChange={setStatus} options={["", "unreviewed", "kept", "review", "trashed"]} allText={t.all} />
           <Select label={t.suggestion} value={suggestion} onChange={setSuggestion} options={["", "keep", "review", "delete"]} allText={t.all} />
           <label className="field compact">
-            <span>{t.category}</span>
-            <input
-              value={category}
-              placeholder="frontend_interview"
-              onChange={(event) => {
-                setPage(1);
-                setCategory(event.target.value);
-              }}
-            />
-          </label>
-          <label className="check-field">
-            <input type="checkbox" checked={useOllama} onChange={(event) => setUseOllama(event.target.checked)} />
-            Ollama
-          </label>
-          <label className="check-field">
-            <input
-              type="checkbox"
-              checked={includeImage}
-              disabled={!useOllama}
-              onChange={(event) => setIncludeImage(event.target.checked)}
-            />
-            {t.withImg}
+            <span>{t.provider}</span>
+            <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <option value="auto">{t.providerAuto}</option>
+              <option value="ai">{t.providerAI}</option>
+              <option value="ollama">{t.providerOllama}</option>
+              <option value="rules">{t.providerRules}</option>
+            </select>
           </label>
           <button className="icon-button" title={t.refresh} onClick={() => load()} disabled={!!busy}>
             <RefreshCw size={16} />
@@ -608,7 +749,7 @@ export function App() {
                   </td>
                   <td className="analysis-cell">
                     <div className="badge-row">
-                      <Badge tone={item.analysis_source === "ollama" ? "accent" : "neutral"}>
+                      <Badge tone={item.analysis_source === "ai" ? "accent" : item.analysis_source === "ollama" ? "accent" : "neutral"}>
                         {item.analysis_source || "none"}
                       </Badge>
                       {item.keep_suggestion && <Badge tone={item.keep_suggestion === "keep" ? "good" : item.keep_suggestion === "delete" ? "bad" : "warn"}>{item.keep_suggestion}</Badge>}
@@ -616,9 +757,17 @@ export function App() {
                     </div>
                     <p>{item.summary || t.unanalyzed}</p>
                     <div className="risk-line">
-                      <span>{t.outdated} {item.staleness_risk || "-"}</span>
-                      <span>{t.distorted} {item.distortion_risk || "-"}</span>
+                      {item.staleness_risk && <span>{t.topic} {item.staleness_risk}</span>}
+                      {item.distortion_risk && (
+                        <span>
+                          {t.ocrQuality}{" "}
+                          <Badge tone={item.distortion_risk === "high" ? "good" : item.distortion_risk === "low" ? "bad" : "warn"}>
+                            {item.distortion_risk}
+                          </Badge>
+                        </span>
+                      )}
                     </div>
+                    {item.category && <p className="keep-reason">{t.reason} {item.category}</p>}
                     <div className="tags">{item.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
                   </td>
                   <td className="status-cell">
@@ -650,7 +799,7 @@ export function App() {
                     <button className="icon-button warn" title={t.tooltipReview} onClick={() => setItemStatus(item, "review")}>
                       <Archive size={16} />
                     </button>
-                    <button className="icon-button danger" title={t.tooltipTrash} onClick={() => confirmTrash(item)}>
+                    <button className="icon-button danger" title={t.tooltipTrash} onClick={() => confirmTrashAction(item)}>
                       <Trash2 size={16} />
                     </button>
                   </td>
@@ -695,7 +844,176 @@ export function App() {
           </div>
         </div>
       )}
+
+      {showSettings && (
+        <AISettingsDialog
+          t={t}
+          onClose={() => {
+            setShowSettings(false);
+            healthCheck().then(setHealthInfo).catch(() => {});
+          }}
+        />
+      )}
     </main>
+  );
+}
+
+/* ---------- AI Settings Dialog ---------- */
+
+function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("https://api.deepseek.com");
+  const [model, setModel] = useState("deepseek-chat");
+  const [presetIdx, setPresetIdx] = useState(0);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ai_config");
+      if (saved) {
+        const config = JSON.parse(saved);
+        setApiKey(config.api_key || "");
+        setBaseUrl(config.base_url || "https://api.deepseek.com");
+        setModel(config.model || "deepseek-chat");
+        const idx = AI_PRESETS.findIndex(p => p.base_url === config.base_url);
+        if (idx >= 0) setPresetIdx(idx);
+        else setPresetIdx(AI_PRESETS.length - 1);
+      }
+    } catch {
+      // ignore
+    }
+    setLoading(false);
+  }, []);
+
+  function handlePresetChange(idx: number) {
+    setPresetIdx(idx);
+    const preset = AI_PRESETS[idx];
+    if (preset.base_url) {
+      setBaseUrl(preset.base_url);
+      if (preset.models.length > 0) setModel(preset.models[0]);
+    }
+  }
+
+  async function handleSave() {
+    if (!apiKey && !baseUrl) return;
+    setSaving(true);
+    const conf = { api_key: apiKey, base_url: baseUrl, model: model };
+    localStorage.setItem("ai_config", JSON.stringify(conf));
+    
+    try {
+      const { testAIConfig } = await import("./api");
+      const result = await testAIConfig(conf);
+      if (result.ai_available) {
+        localStorage.setItem("ai_available", "true");
+        setTestResult(t.connOk);
+      } else {
+        localStorage.setItem("ai_available", "false");
+        setTestResult(t.connFail);
+      }
+    } catch (err) {
+      localStorage.setItem("ai_available", "false");
+      setTestResult(t.connFail);
+    }
+    setSaving(false);
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    const conf = { api_key: apiKey, base_url: baseUrl, model: model };
+    try {
+      const { testAIConfig } = await import("./api");
+      const result = await testAIConfig(conf);
+      setTestResult(result.ai_available ? t.connOk : t.connFail);
+    } catch {
+      setTestResult(t.connFail);
+    }
+    setTesting(false);
+  }
+
+  const preset = AI_PRESETS[presetIdx];
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="edit-dialog settings-dialog">
+        <div className="dialog-bar">
+          <strong>{t.settingsTitle}</strong>
+          <button className="icon-button" onClick={onClose} title={t.close} aria-label={t.close}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: "24px", textAlign: "center" }}>
+            <Loader2 className="spin" size={24} />
+          </div>
+        ) : (
+          <div className="settings-form">
+            <label className="settings-field">
+              <span>{t.presetLabel}</span>
+              <select value={presetIdx} onChange={(e) => handlePresetChange(Number(e.target.value))}>
+                {AI_PRESETS.map((p, i) => (
+                  <option key={i} value={i}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="settings-field">
+              <span>{t.apiKeyLabel}</span>
+              <input
+                type="password"
+                value={apiKey}
+                placeholder={t.apiKeyPlaceholder}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>{t.baseUrlLabel}</span>
+              <input
+                value={baseUrl}
+                placeholder="https://api.deepseek.com"
+                onChange={(e) => setBaseUrl(e.target.value)}
+                readOnly={preset.base_url !== ""}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>{t.modelLabel}</span>
+              {preset.models.length > 0 ? (
+                <select value={model} onChange={(e) => setModel(e.target.value)}>
+                  {preset.models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="model-name" />
+              )}
+            </label>
+
+            {testResult && (
+              <div className={`settings-test-result ${testResult.includes("✓") ? "good" : "bad"}`}>
+                {testResult}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="dialog-actions">
+          <button onClick={handleTest} disabled={testing || !apiKey}>
+            {testing ? <Loader2 className="spin" size={14} /> : null}
+            {t.testConn}
+          </button>
+          <button className="primary-button" onClick={handleSave} disabled={saving || !apiKey}>
+            {saving ? <Loader2 className="spin" size={14} /> : null}
+            {t.save}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

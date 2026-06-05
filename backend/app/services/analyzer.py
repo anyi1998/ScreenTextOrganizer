@@ -8,145 +8,142 @@ from dataclasses import dataclass, asdict
 @dataclass
 class AnalysisResult:
     analysis_source: str
-    category: str
+    category: str       # reused for keep_reason
     summary: str
     value_score: int
     keep_suggestion: str
-    staleness_risk: str
-    distortion_risk: str
+    staleness_risk: str  # reused for topic
+    distortion_risk: str  # reused for ocr_quality
     tags: list[str]
 
 
-FRONTEND_KEYWORDS = {
-    "React": ["react", "jsx", "hooks", "useeffect", "usestate", "fiber"],
-    "Vue": ["vue", "vuex", "pinia", "computed", "watch"],
-    "JavaScript": ["javascript", "js", "闭包", "原型链", "事件循环", "promise", "async", "await"],
-    "CSS": ["css", "flex", "grid", "盒模型", "布局", "选择器"],
-    "HTTP": ["http", "缓存", "cookie", "跨域", "cors", "cdn"],
-    "Build": ["webpack", "vite", "babel", "loader", "plugin"],
+# ── Shared AI prompt (used by ai_provider and ollama) ──────────────────
+
+ANALYSIS_PROMPT = """\
+你是一个截图整理助手。用户会截图保存各种有用的信息（知乎讨论、读书笔记、新闻、教程、聊天记录、代码等等）。
+请根据 OCR 文字分析这张截图的内容。
+
+输出 JSON，字段如下：
+{
+  "summary": "一句话概括截图的核心内容。要求提炼要点，不要复述原文。",
+  "topic": "内容的话题或主题，如：房产投资、编程技术、读书感悟、职场经验、生活技巧、健康养生等",
+  "value_score": "1-5 的整数。5=非常有价值的知识或观点，1=碎片信息、无实质内容",
+  "keep_suggestion": "keep（值得保留）/ review（需要人工判断）/ delete（建议删除）",
+  "keep_reason": "简短说明保留或删除的理由",
+  "time_sensitive": false,
+  "ocr_quality": "low/medium/high — OCR 文字是否完整可读，有无乱码或大量缺失",
+  "tags": ["标签1", "标签2"]
 }
 
-STALE_PATTERNS = [
-    "componentwillmount",
-    "componentwillreceiveprops",
-    "componentwillupdate",
-    "vue2",
-    "vue 2",
-    "jquery",
-    "ie8",
-    "ie9",
-    "attachEvent".lower(),
-    "webpack3",
-    "webpack 3",
-    "webpack4",
-    "webpack 4",
-]
+评判标准：
+- 有具体知识点、数据、独到观点、实用方法的 → 高分（4-5）
+- 有一定信息但不够深入或太碎片化的 → 中分（3）
+- 纯闲聊、无实质信息、重复内容、纯 UI 界面截图 → 低分（1-2）
+- 内容涉及价格、政策、排名、市场数据等随时间变化的信息 → time_sensitive 设为 true
+- OCR 文字有明显乱码、大量不可读字符、或文字极少 → ocr_quality 设为 low
+- tags 最多 5 个，用中文，反映内容主题""".strip()
 
+
+# ── Rules-based fallback analysis ──────────────────────────────────────
 
 def analyze_text_rules(text: str) -> AnalysisResult:
+    """Lightweight rules-based analysis as fallback when no AI is available."""
     normalized = (text or "").strip()
     lower = normalized.lower()
     tags: list[str] = []
 
-    for tag, keywords in FRONTEND_KEYWORDS.items():
-        if any(keyword.lower() in lower or keyword in normalized for keyword in keywords):
+    # ── Basic content detection for tags ──
+    tag_patterns: dict[str, list[str]] = {
+        "技术": ["代码", "代碼", "function", "const ", "class ", "def ", "import ", "error", "bug", "api"],
+        "读书": ["读书", "书摘", "摘录", "这本书", "作者说", "章节", "读后感"],
+        "投资": ["投资", "理财", "基金", "股票", "房价", "房产", "收益率"],
+        "职场": ["面试", "简历", "工资", "涨薪", "跳槽", "offer"],
+        "生活": ["食谱", "健身", "减肥", "旅游", "攻略"],
+    }
+    for tag, keywords in tag_patterns.items():
+        if any(k in lower or k in normalized for k in keywords):
             tags.append(tag)
 
-    if any(term in lower for term in ["面试", "八股", "问：", "答：", "interview"]) or (
-        "question" in lower and tags
-    ):
-        category = "frontend_interview" if tags else "interview"
-    elif any(term in lower for term in ["function", "const ", "let ", "class ", "error", "exception"]):
-        category = "code"
-    elif any(term in normalized for term in ["读书", "书摘", "摘录", "作者", "章节", "书中", "这本书"]):
-        category = "book_excerpt"
-    elif any(term in normalized for term in ["灵感", "想法", "启发", "可以做", "值得"]):
-        category = "idea"
-    elif len(normalized) < 8:
-        category = "low_text"
+    # ── OCR quality estimation ──
+    ocr_quality = _estimate_ocr_quality(normalized)
+
+    # ── Value score ──
+    score = 3
+    if len(normalized) > 150:
+        score += 1
+    if len(normalized) > 400:
+        score += 1
+    if len(normalized) < 15:
+        score -= 2
+    if ocr_quality == "low":
+        score -= 2
+    elif ocr_quality == "medium":
+        score -= 1
+    score = min(5, max(1, score))
+
+    # ── Keep suggestion ──
+    if ocr_quality == "low" or score <= 1:
+        keep_suggestion = "delete"
+    elif score >= 4:
+        keep_suggestion = "keep"
     else:
-        category = "note"
+        keep_suggestion = "review"
 
-    stale = any(pattern in lower for pattern in STALE_PATTERNS)
-    staleness_risk = "high" if stale else ("medium" if category == "frontend_interview" else "low")
+    # ── Summary (basic: truncate, and note AI is recommended) ──
+    if not normalized:
+        summary = "未识别出有效文字。"
+    else:
+        compact = re.sub(r"\s+", " ", normalized)
+        preview = compact[:80] + ("..." if len(compact) > 80 else "")
+        summary = preview
 
-    distortion_risk = estimate_distortion_risk(normalized)
-    value_score = estimate_value_score(normalized, category, staleness_risk, distortion_risk)
-    keep_suggestion = suggest_keep(value_score, distortion_risk)
-    summary = build_summary(normalized, category)
+    # ── Topic guess ──
+    topic = tags[0] if tags else "未分类"
 
-    if category == "frontend_interview" and "Frontend" not in tags:
-        tags.insert(0, "Frontend")
-    if stale and "Possibly outdated" not in tags:
-        tags.append("Possibly outdated")
+    # ── Keep reason ──
+    if score >= 4:
+        keep_reason = "内容较丰富，建议保留"
+    elif ocr_quality == "low":
+        keep_reason = "OCR 质量较差，文字可能不完整"
+    elif len(normalized) < 15:
+        keep_reason = "文字信息过少"
+    else:
+        keep_reason = "建议启用 AI 分析以获得更准确的判断"
 
     return AnalysisResult(
         analysis_source="rules",
-        category=category,
+        category=keep_reason,
         summary=summary,
-        value_score=value_score,
+        value_score=score,
         keep_suggestion=keep_suggestion,
-        staleness_risk=staleness_risk,
-        distortion_risk=distortion_risk,
-        tags=tags[:8],
+        staleness_risk=topic,
+        distortion_risk=ocr_quality,
+        tags=tags[:5],
     )
 
 
-def estimate_distortion_risk(text: str) -> str:
+def _estimate_ocr_quality(text: str) -> str:
+    """Estimate OCR quality based on character patterns."""
     if not text:
-        return "high"
+        return "low"
     if not re.search(r"[\w\u4e00-\u9fff]", text):
-        return "high"
-    if len(text) < 12:
+        return "low"
+    if len(text) < 10:
         return "medium"
-    unusual = len(re.findall(r"[^\w\s\u4e00-\u9fff，。！？；：、（）《》【】“”‘’.,!?;:()\\[\\]{}<>/+-]", text))
+    unusual = len(re.findall(r"[^\w\s\u4e00-\u9fff，。！？；：、（）《》【】""''.,!?;:()\\{}<>/+@#$%&*=~`|-]", text))
     ratio = unusual / max(len(text), 1)
     repeated = bool(re.search(r"(.)\1{6,}", text))
-    if ratio > 0.18 or repeated:
-        return "high"
-    if ratio > 0.08:
+    if ratio > 0.15 or repeated:
+        return "low"
+    if ratio > 0.06:
         return "medium"
-    return "low"
+    return "high"
 
 
-def estimate_value_score(text: str, category: str, staleness_risk: str, distortion_risk: str) -> int:
-    score = 3
-    if category in {"book_excerpt", "idea", "frontend_interview", "code"}:
-        score += 1
-    if len(text) > 120:
-        score += 1
-    if staleness_risk == "high":
-        score -= 1
-    if distortion_risk == "high":
-        score -= 2
-    if distortion_risk == "medium":
-        score -= 1
-    return min(5, max(1, score))
-
-
-def suggest_keep(value_score: int, distortion_risk: str) -> str:
-    if distortion_risk == "high" or value_score <= 2:
-        return "delete"
-    if value_score >= 4:
-        return "keep"
-    return "review"
-
-
-def build_summary(text: str, category: str) -> str:
-    if not text:
-        return "未识别出有效文字。"
-    compact = re.sub(r"\s+", " ", text)
-    prefix = {
-        "frontend_interview": "前端面试题或相关知识点",
-        "book_excerpt": "书摘或阅读记录",
-        "idea": "灵感或想法记录",
-        "code": "代码或技术截图",
-        "low_text": "文字信息较少",
-    }.get(category, "普通笔记")
-    return f"{prefix}：{compact[:90]}{'...' if len(compact) > 90 else ''}"
-
+# ── JSON parsing ──────────────────────────────────────────────────────
 
 def parse_analysis_json(raw: str) -> AnalysisResult | None:
+    """Parse AI response JSON into AnalysisResult, mapping new fields to DB columns."""
     try:
         start = raw.find("{")
         end = raw.rfind("}")
@@ -154,14 +151,14 @@ def parse_analysis_json(raw: str) -> AnalysisResult | None:
             return None
         data = json.loads(raw[start : end + 1])
         return AnalysisResult(
-            analysis_source="ollama",
-            category=str(data.get("category") or "note"),
+            analysis_source="ai",
+            category=str(data.get("keep_reason") or ""),
             summary=str(data.get("summary") or ""),
             value_score=int(data.get("value_score") or 3),
             keep_suggestion=str(data.get("keep_suggestion") or "review"),
-            staleness_risk=str(data.get("staleness_risk") or "low"),
-            distortion_risk=str(data.get("distortion_risk") or "low"),
-            tags=[str(tag) for tag in data.get("tags", [])][:8],
+            staleness_risk=str(data.get("topic") or ""),
+            distortion_risk=str(data.get("ocr_quality") or "medium"),
+            tags=[str(tag) for tag in data.get("tags", [])][:5],
         )
     except Exception:
         return None
@@ -173,14 +170,12 @@ def to_update_dict(result: AnalysisResult) -> dict:
     return data
 
 
-def merge_ollama_with_rules(ollama: AnalysisResult, rules: AnalysisResult) -> AnalysisResult:
-    generic_categories = {"other", "note", "low_text", ""}
-    if ollama.category in generic_categories and rules.category not in generic_categories:
-        ollama.category = rules.category
-    if rules.staleness_risk == "high" and ollama.staleness_risk != "high":
-        ollama.staleness_risk = "high"
-    if rules.distortion_risk == "high" and ollama.distortion_risk != "high":
-        ollama.distortion_risk = "high"
-    merged_tags = list(dict.fromkeys([*rules.tags, *ollama.tags]))
-    ollama.tags = merged_tags[:8]
-    return ollama
+def merge_ai_with_rules(ai_result: AnalysisResult, rules_result: AnalysisResult) -> AnalysisResult:
+    """Merge AI analysis with rules-based checks (e.g., OCR quality override)."""
+    # If rules detect bad OCR quality but AI didn't, trust rules
+    if rules_result.distortion_risk == "low" and ai_result.distortion_risk != "low":
+        ai_result.distortion_risk = rules_result.distortion_risk
+    # Merge tags (AI tags first, then rules tags for anything extra)
+    merged_tags = list(dict.fromkeys([*ai_result.tags, *rules_result.tags]))
+    ai_result.tags = merged_tags[:5]
+    return ai_result

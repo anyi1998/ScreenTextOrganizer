@@ -16,9 +16,18 @@ class RunRequest(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=500)
-    use_ollama: bool = False
+    provider: Literal["auto", "ai", "ollama", "rules"] = "auto"
     include_image: bool = False
     model: str | None = None
+    ai_api_key: str | None = None
+    ai_base_url: str | None = None
+    ai_model: str | None = None
+
+
+class AIConfigUpdate(BaseModel):
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-chat"
 
 
 class ItemUpdate(BaseModel):
@@ -33,4 +42,3 @@ class ItemListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-

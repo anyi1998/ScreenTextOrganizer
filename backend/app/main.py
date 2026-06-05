@@ -13,12 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from send2trash import send2trash
 
-from .config import DEFAULT_OLLAMA_MODEL
+from .config import AI_API_KEY, AI_BASE_URL, AI_MODEL, DEFAULT_OLLAMA_MODEL, save_ai_config
 from .database import connect, init_db, json_tags, row_to_dict, utc_now
-from .schemas import AnalyzeRequest, ItemListResponse, ItemUpdate, RunRequest, ScanRequest
-from .services.analyzer import analyze_text_rules, merge_ollama_with_rules, to_update_dict
+from .schemas import AIConfigUpdate, AnalyzeRequest, ItemListResponse, ItemUpdate, RunRequest, ScanRequest
+from .services.ai_provider import analyze_with_ai, check_connection, is_configured
+from .services.analyzer import analyze_text_rules, merge_ai_with_rules, to_update_dict
 from .services.ocr import run_ocr
-from .services.ollama import analyze_with_ollama
+from .services.ollama import analyze_with_ollama, check_ollama
 from .services.scanner import scan_directory
 
 
@@ -44,7 +45,57 @@ _ocr_lock = threading.Lock()
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "ollama_model": DEFAULT_OLLAMA_MODEL}
+    ollama_info = check_ollama()
+    ai_info = check_connection()
+    return {
+        "ok": True,
+        "ollama_available": ollama_info["available"],
+        "ollama_models": ollama_info.get("models", []),
+        "ai_configured": is_configured(),
+        "ai_available": ai_info.get("available", False),
+        "ai_model": AI_MODEL,
+        "ai_base_url": AI_BASE_URL,
+    }
+
+
+@app.get("/api/config/ai")
+def get_ai_config() -> dict:
+    """Return current AI config (key is masked)."""
+    from .config import AI_API_KEY as key, AI_BASE_URL as url, AI_MODEL as model
+    masked_key = ""
+    if key:
+        if len(key) > 8:
+            masked_key = key[:4] + "*" * (len(key) - 8) + key[-4:]
+        else:
+            masked_key = "****"
+    return {
+        "api_key_masked": masked_key,
+        "api_key_set": bool(key and key != "sk-your-api-key-here"),
+        "base_url": url,
+        "model": model,
+    }
+
+
+@app.post("/api/config/ai")
+def update_ai_config(req: AIConfigUpdate) -> dict:
+    """Save AI config to .env file."""
+    save_ai_config(req.api_key, req.base_url, req.model)
+    ai_info = check_connection()
+    return {
+        "saved": True,
+        "ai_available": ai_info.get("available", False),
+        **ai_info,
+    }
+
+
+@app.post("/api/ai/test")
+def test_ai_config(req: AIConfigUpdate) -> dict:
+    """Test AI config without saving it."""
+    ai_info = check_connection(api_key=req.api_key, base_url=req.base_url, model=req.model)
+    return {
+        "ai_available": ai_info.get("available", False),
+        **ai_info,
+    }
 
 
 @app.post("/api/scan")
@@ -173,11 +224,43 @@ def run_analysis(req: AnalyzeRequest) -> dict:
         rows = conn.execute(sql, params).fetchall()
 
     processed = 0
+    ai_used = 0
     ollama_used = 0
+
+    # Determine available providers
+    env_configured = is_configured()
+    ai_available = env_configured or bool(req.ai_api_key)
+    ollama_info = check_ollama()
+    ollama_available = ollama_info["available"]
+
     for row in rows:
         rules_result = analyze_text_rules(row["ocr_text"])
         result = None
-        if req.use_ollama:
+
+        # Try providers based on preference
+        provider = req.provider
+
+        if provider == "auto":
+            # Auto: try AI first, then Ollama, then rules
+            if ai_available:
+                provider = "ai"
+            elif ollama_available:
+                provider = "ollama"
+            else:
+                provider = "rules"
+
+        if provider == "ai" and ai_available:
+            ai_result = analyze_with_ai(
+                row["ocr_text"],
+                api_key=req.ai_api_key,
+                base_url=req.ai_base_url,
+                model=req.ai_model,
+            )
+            if ai_result:
+                result = merge_ai_with_rules(ai_result, rules_result)
+                ai_used += 1
+
+        if result is None and provider in ("ai", "ollama", "auto") and ollama_available:
             ollama_result = analyze_with_ollama(
                 row["ocr_text"],
                 image_path=row["source_path"],
@@ -185,8 +268,9 @@ def run_analysis(req: AnalyzeRequest) -> dict:
                 model=req.model,
             )
             if ollama_result:
-                result = merge_ollama_with_rules(ollama_result, rules_result)
+                result = merge_ai_with_rules(ollama_result, rules_result)
                 ollama_used += 1
+
         if result is None:
             result = rules_result
 
@@ -214,7 +298,7 @@ def run_analysis(req: AnalyzeRequest) -> dict:
                 ),
             )
         processed += 1
-    return {"processed": processed, "ollama_used": ollama_used, "total": len(rows)}
+    return {"processed": processed, "ai_used": ai_used, "ollama_used": ollama_used, "total": len(rows)}
 
 
 @app.patch("/api/items/{item_id}")

@@ -16,12 +16,12 @@ export interface PicItem {
   ocr_status: string;
   ocr_error: string | null;
   analysis_source: string | null;
-  category: string | null;
+  category: string | null;       // keep_reason
   summary: string | null;
   value_score: number | null;
   keep_suggestion: string | null;
-  staleness_risk: string | null;
-  distortion_risk: string | null;
+  staleness_risk: string | null;  // topic
+  distortion_risk: string | null; // ocr_quality
   tags: string[];
   status: ItemStatus;
   notes: string;
@@ -46,3 +46,19 @@ export interface OcrStatus {
   current_file: string;
 }
 
+export interface HealthInfo {
+  ok: boolean;
+  ollama_available: boolean;
+  ollama_models: string[];
+  ai_configured: boolean;
+  ai_available: boolean;
+  ai_model: string;
+  ai_base_url: string;
+}
+
+export interface AIConfig {
+  api_key_masked: string;
+  api_key_set: boolean;
+  base_url: string;
+  model: string;
+}

@@ -1,4 +1,4 @@
-import type { ListResponse, OcrStatus, PicItem } from "./types";
+import type { AIConfig, HealthInfo, ListResponse, OcrStatus, PicItem } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -12,6 +12,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+export function healthCheck() {
+  return request<HealthInfo>("/api/health");
+}
+
+export function getAIConfig() {
+  return request<AIConfig>("/api/config/ai");
+}
+
+export function saveAIConfig(config: { api_key: string; base_url: string; model: string }) {
+  return request<{ saved: boolean; ai_available: boolean }>("/api/config/ai", {
+    method: "POST",
+    body: JSON.stringify(config)
+  });
+}
+
+export function testAIConfig(config: { api_key: string; base_url: string; model: string }) {
+  return request<{ ai_available: boolean }>("/api/ai/test", {
+    method: "POST",
+    body: JSON.stringify(config)
+  });
 }
 
 export function listItems(params: URLSearchParams) {
@@ -38,17 +60,23 @@ export function getOcrStatus() {
 
 export function runAnalysis(options: {
   limit?: number;
-  use_ollama: boolean;
+  provider: string;
   include_image: boolean;
   model?: string;
+  ai_api_key?: string;
+  ai_base_url?: string;
+  ai_model?: string;
 }) {
   return request<Record<string, number>>("/api/analyze/run", {
     method: "POST",
     body: JSON.stringify({
       limit: options.limit || null,
-      use_ollama: options.use_ollama,
+      provider: options.provider,
       include_image: options.include_image,
-      model: options.model || null
+      model: options.model || null,
+      ai_api_key: options.ai_api_key || null,
+      ai_base_url: options.ai_base_url || null,
+      ai_model: options.ai_model || null
     })
   });
 }

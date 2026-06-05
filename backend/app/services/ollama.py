@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 
 from ..config import DEFAULT_OLLAMA_MODEL, OLLAMA_BASE_URL
-from .analyzer import AnalysisResult, parse_analysis_json
+from .analyzer import ANALYSIS_PROMPT, AnalysisResult, parse_analysis_json
 
 
 OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/chat"
@@ -20,29 +20,11 @@ def analyze_with_ollama(
     model: str | None = None,
     timeout: int = 90,
 ) -> AnalysisResult | None:
-    prompt = """
-你是一个本地图片资料整理助手。请根据 OCR 文本和可选图片内容，判断这张截图是否值得保留。
-只输出 JSON，不要输出 Markdown。
-字段必须是：
-category: frontend_interview/book_excerpt/idea/code/note/low_text/other
-summary: 中文一句话摘要
-value_score: 1 到 5 的整数
-keep_suggestion: keep/delete/review
-staleness_risk: low/medium/high
-distortion_risk: low/medium/high
-tags: 字符串数组，最多 8 个
-
-判断重点：
-- 前端面试题是否偏老，例如 React 旧生命周期、Vue2 专属写法、jQuery、IE 兼容、旧 Webpack 配置。
-- OCR 文本是否疑似失真、乱码、信息不足。
-- 书摘或启发是否有复用价值。
-
-OCR 文本：
-""".strip()
+    prompt = ANALYSIS_PROMPT
 
     message: dict = {
         "role": "user",
-        "content": f"{prompt}\n{text or '(空)'}\n/no_think",
+        "content": f"{prompt}\n\nOCR 文本：\n{text or '(空)'}\n/no_think",
     }
 
     if include_image and image_path:
@@ -71,9 +53,27 @@ OCR 文本：
         with urllib.request.urlopen(req, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
             content = body.get("message", {}).get("content", "")
-            return parse_analysis_json(content)
+            result = parse_analysis_json(content)
+            if result:
+                result.analysis_source = "ollama"
+            return result
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
         return None
+
+
+def check_ollama() -> dict:
+    """Check if Ollama is running and return available models."""
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_BASE_URL}/api/tags",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            body = json.loads(response.read().decode("utf-8"))
+            models = [m.get("name", "") for m in body.get("models", [])]
+            return {"available": True, "models": models}
+    except Exception:
+        return {"available": False, "models": []}
 
 
 def ocr_with_ollama(
