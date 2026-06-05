@@ -32,8 +32,6 @@ import {
 } from "./api";
 import type { ItemStatus, OcrStatus, PicItem } from "./types";
 
-const PAGE_SIZE = 24;
-
 const translations = {
   zh: {
     subtitle: "本地截图文字整理、识别和审阅",
@@ -67,6 +65,7 @@ const translations = {
     distorted: "失真",
     exportJson: "导出 JSON",
     exportCsv: "导出 CSV",
+    perPage: "每页显示",
     msgOcrDone: "✓ OCR 完成：已处理",
     msgOcrFail: "失败",
     msgNoOcr: "✓ 没有待处理的 OCR 项目",
@@ -123,6 +122,7 @@ const translations = {
     distorted: "Distorted",
     exportJson: "Export JSON",
     exportCsv: "Export CSV",
+    perPage: "Per Page",
     msgOcrDone: "✓ OCR Done: Processed",
     msgOcrFail: "Failed",
     msgNoOcr: "✓ No pending OCR items",
@@ -179,6 +179,7 @@ const translations = {
     distorted: "歪み",
     exportJson: "JSON出力",
     exportCsv: "CSV出力",
+    perPage: "表示件数",
     msgOcrDone: "✓ OCR完了：処理済み",
     msgOcrFail: "失敗",
     msgNoOcr: "✓ 保留中のOCRアイテムはありません",
@@ -235,6 +236,7 @@ const translations = {
     distorted: "Verzerrt",
     exportJson: "JSON Export",
     exportCsv: "CSV Export",
+    perPage: "Pro Seite",
     msgOcrDone: "✓ OCR Fertig: Verarbeitet",
     msgOcrFail: "Fehlgeschlagen",
     msgNoOcr: "✓ Keine ausstehenden OCR-Elemente",
@@ -267,6 +269,7 @@ export function App() {
   const [lang, setLang] = useState<LangType>("zh");
   const t = translations[lang];
 
+  const [pageSize, setPageSize] = useState(20);
   const [directory, setDirectory] = useState("");
   const [recursive, setRecursive] = useState(true);
   const [query, setQuery] = useState("");
@@ -289,14 +292,14 @@ export function App() {
   const params = useMemo(() => {
     const next = new URLSearchParams({
       page: String(page),
-      page_size: String(PAGE_SIZE)
+      page_size: String(pageSize)
     });
     if (query.trim()) next.set("q", query.trim());
     if (status) next.set("status", status);
     if (category) next.set("category", category);
     if (suggestion) next.set("suggestion", suggestion);
     return next;
-  }, [page, query, status, category, suggestion]);
+  }, [page, pageSize, query, status, category, suggestion]);
 
   const load = useCallback(async () => {
     const data = await listItems(params);
@@ -399,7 +402,7 @@ export function App() {
     setEditing(null);
   }
 
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <main className="app-shell">
@@ -528,6 +531,33 @@ export function App() {
           <span>
             <Filter size={14} /> {t.total} {total} {t.items}
           </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span>{t.perPage}</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+              style={{
+                background: "var(--bg-input)",
+                border: "1px solid var(--border-strong)",
+                color: "var(--text-secondary)",
+                borderRadius: "var(--radius-sm)",
+                padding: "2px 8px",
+                minHeight: "unset",
+                height: "26px",
+                fontSize: "12px",
+                cursor: "pointer",
+                outline: "none"
+              }}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
           <span>
             {t.page} {page} {t.pageOf} {pageCount} {t.pageUnit}
           </span>
