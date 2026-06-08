@@ -7,7 +7,8 @@ import type {
   OcrStatus,
   PicItem,
   ScanResult,
-  StatsInfo
+  StatsInfo,
+  TasksStatus
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -75,6 +76,10 @@ export function listItems(params: URLSearchParams) {
 
 export function getStats() {
   return request<StatsInfo>("/api/stats");
+}
+
+export function getTasksStatus() {
+  return request<TasksStatus>("/api/tasks/status");
 }
 
 export function scan(directory: string, recursive: boolean) {

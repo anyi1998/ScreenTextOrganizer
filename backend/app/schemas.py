@@ -108,6 +108,13 @@ class AnalyzeRunResponse(BaseModel):
     last_error: str | None
 
 
+class TasksStatusResponse(BaseModel):
+    busy: bool
+    active_task: Literal["ocr", "analysis"] | None
+    ocr: OcrStatusResponse
+    analysis: AnalyzeRunResponse
+
+
 class StatsBucket(BaseModel):
     name: str
     count: int

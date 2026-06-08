@@ -30,6 +30,7 @@ from .schemas import (
     ScanRequest,
     ScanResponse,
     StatsResponse,
+    TasksStatusResponse,
     TrashResponse,
 )
 from .services.ai_provider import analyze_with_ai, check_connection, is_configured
@@ -140,6 +141,22 @@ def _analysis_snapshot() -> dict:
     return {"status": _analysis_status_name(state), **state}
 
 
+def _tasks_snapshot() -> dict:
+    ocr = _ocr_snapshot()
+    analysis = _analysis_snapshot()
+    active_task = None
+    if ocr["running"]:
+        active_task = "ocr"
+    elif analysis["running"]:
+        active_task = "analysis"
+    return {
+        "busy": active_task is not None,
+        "active_task": active_task,
+        "ocr": ocr,
+        "analysis": analysis,
+    }
+
+
 def _mask_api_key(key: str) -> str:
     if not key:
         return ""
@@ -176,6 +193,11 @@ def health() -> dict:
         "ai_model": config.AI_MODEL,
         "ai_base_url": config.AI_BASE_URL,
     }
+
+
+@app.get("/api/tasks/status", response_model=TasksStatusResponse)
+def tasks_status() -> dict:
+    return _tasks_snapshot()
 
 
 @app.get("/api/config/ai", response_model=AIConfigResponse)
@@ -348,6 +370,9 @@ def run_ocr_batch(req: RunRequest) -> dict:
     with _ocr_lock:
         if _ocr_state["running"]:
             return {"status": "already_running", **dict(_ocr_state)}
+    with _analysis_lock:
+        if _analysis_state["running"]:
+            raise HTTPException(status_code=409, detail="Analysis is already running")
 
     with connect() as conn:
         sql = "SELECT id, source_path, filename FROM items WHERE ocr_status IN ('pending', 'failed') AND status != 'trashed' ORDER BY id"
@@ -510,6 +535,9 @@ def run_analysis(req: AnalyzeRequest) -> dict:
     with _analysis_lock:
         if _analysis_state["running"]:
             return {"status": "already_running", **dict(_analysis_state)}
+    with _ocr_lock:
+        if _ocr_state["running"]:
+            raise HTTPException(status_code=409, detail="OCR is already running")
 
     with connect() as conn:
         sql = """

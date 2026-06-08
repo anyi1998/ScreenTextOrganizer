@@ -116,6 +116,13 @@ export interface HealthInfo {
   ai_base_url: string;
 }
 
+export interface TasksStatus {
+  busy: boolean;
+  active_task: "ocr" | "analysis" | null;
+  ocr: OcrStatus;
+  analysis: AnalyzeResult;
+}
+
 export interface AIConfig {
   api_key_masked: string;
   api_key_set: boolean;

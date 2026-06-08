@@ -29,6 +29,7 @@ import {
   getAIConfig,
   getOcrStatus,
   getStats,
+  getTasksStatus,
   healthCheck,
   imageUrl,
   listItems,
@@ -617,6 +618,27 @@ export function App() {
   }, [stopAnalysisPoll, refreshData, t]);
 
   useEffect(() => stopAnalysisPoll, [stopAnalysisPoll]);
+
+  useEffect(() => {
+    let active = true;
+    getTasksStatus()
+      .then((tasks) => {
+        if (!active) return;
+        if (tasks.ocr.running) {
+          setBusy("OCR");
+          setOcrProgress(tasks.ocr);
+          startOcrPoll();
+        } else if (tasks.analysis.running) {
+          setBusy(t.analyze);
+          setAnalysisProgress(tasks.analysis);
+          startAnalysisPoll();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [startAnalysisPoll, startOcrPoll, t.analyze]);
 
   async function handleOcr() {
     setBusy("OCR");

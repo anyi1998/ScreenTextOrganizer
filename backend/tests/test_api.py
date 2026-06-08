@@ -5,7 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.database import connect, utc_now
-from app.main import app
+from app.main import _analysis_lock, _analysis_state, _ocr_lock, _ocr_state, app
 
 
 def test_health():
@@ -48,6 +48,40 @@ def test_analysis_status_idle_and_cancel_safe():
     assert cancel_res.status_code == 200
     assert status_res.json()["status"] == "idle"
     assert cancel_res.json()["running"] is False
+
+
+def test_tasks_status_reports_idle_state():
+    with TestClient(app) as client:
+        res = client.get("/api/tasks/status")
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["busy"] is False
+    assert data["active_task"] is None
+    assert data["ocr"]["status"] == "idle"
+    assert data["analysis"]["status"] == "idle"
+
+
+def test_ocr_run_rejects_when_analysis_is_running():
+    with _analysis_lock:
+        _analysis_state["running"] = True
+
+    with TestClient(app) as client:
+        res = client.post("/api/ocr/run", json={})
+
+    assert res.status_code == 409
+    assert res.json()["detail"] == "Analysis is already running"
+
+
+def test_analysis_run_rejects_when_ocr_is_running():
+    with _ocr_lock:
+        _ocr_state["running"] = True
+
+    with TestClient(app) as client:
+        res = client.post("/api/analyze/run", json={"provider": "rules"})
+
+    assert res.status_code == 409
+    assert res.json()["detail"] == "OCR is already running"
 
 
 def test_analysis_run_no_items_returns_idle_snapshot():

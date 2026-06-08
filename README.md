@@ -30,6 +30,7 @@ Local web tool for reviewing saved screenshots, book excerpts, interview-questio
 - Content-aware rescans: unchanged files are left untouched, while changed image files reset stale OCR and analysis data.
 - Cancellable OCR batches: cancellation stops the queue after the current image finishes so database state remains consistent.
 - Cancellable analysis batches: long AI/Ollama analysis runs in a background worker with `/api/analyze/status` and `/api/analyze/cancel`.
+- Unified task coordination: `/api/tasks/status` reports active background work and OCR/analysis batches are mutually exclusive to avoid model and database contention.
 - Backend-managed AI configuration: API keys are saved in `.env`, can be cleared from the UI, and are returned to the browser only as masked metadata.
 - Explicit API contracts: core endpoints use response models for health, scan, OCR status, AI config, analysis runs, trash actions, and stats.
 - Testable runtime isolation: `PIC_TEXT_PULL_DATA_DIR` and `PIC_TEXT_PULL_ENV_PATH` can redirect generated data and config.
