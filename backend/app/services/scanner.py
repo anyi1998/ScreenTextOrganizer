@@ -30,7 +30,7 @@ def iter_images(directory: Path, recursive: bool) -> list[Path]:
     ]
 
 
-def scan_directory(directory: str, recursive: bool = True) -> dict[str, int]:
+def scan_directory(directory: str, recursive: bool = True) -> dict[str, object]:
     root = Path(directory).expanduser().resolve()
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Directory does not exist: {root}")
@@ -38,6 +38,7 @@ def scan_directory(directory: str, recursive: bool = True) -> dict[str, int]:
     scanned = 0
     inserted = 0
     updated = 0
+    unchanged = 0
     failed = 0
     errors: list[dict[str, str]] = []
 
@@ -47,19 +48,28 @@ def scan_directory(directory: str, recursive: bool = True) -> dict[str, int]:
             try:
                 stat = image_path.stat()
                 file_hash = sha256_file(image_path)
-                thumbnail_path, width, height = generate_thumbnail(image_path, file_hash)
                 now = utc_now()
                 source_path = normalize_path(image_path)
 
                 existing = conn.execute(
-                    "SELECT id FROM items WHERE source_path = ?", (source_path,)
+                    "SELECT id, file_hash FROM items WHERE source_path = ?", (source_path,)
                 ).fetchone()
                 if existing:
+                    if existing["file_hash"] == file_hash:
+                        unchanged += 1
+                        continue
+
+                    thumbnail_path, width, height = generate_thumbnail(image_path, file_hash)
                     conn.execute(
                         """
                         UPDATE items
                         SET file_hash = ?, file_size = ?, width = ?, height = ?,
-                            modified_time = ?, thumbnail_path = ?, updated_at = ?
+                            modified_time = ?, thumbnail_path = ?,
+                            ocr_text = '', ocr_confidence = NULL, ocr_status = 'pending',
+                            ocr_error = NULL, analysis_source = NULL, category = NULL,
+                            summary = NULL, value_score = NULL, keep_suggestion = NULL,
+                            staleness_risk = NULL, distortion_risk = NULL, tags = ?,
+                            updated_at = ?
                         WHERE id = ?
                         """,
                         (
@@ -69,12 +79,14 @@ def scan_directory(directory: str, recursive: bool = True) -> dict[str, int]:
                             height,
                             iso_from_timestamp(stat.st_mtime),
                             thumbnail_path,
+                            json_tags([]),
                             now,
                             existing["id"],
                         ),
                     )
                     updated += 1
                 else:
+                    thumbnail_path, width, height = generate_thumbnail(image_path, file_hash)
                     conn.execute(
                         """
                         INSERT INTO items (
@@ -104,5 +116,11 @@ def scan_directory(directory: str, recursive: bool = True) -> dict[str, int]:
                 failed += 1
                 errors.append({"file": str(image_path), "error": str(exc)})
 
-    return {"scanned": scanned, "inserted": inserted, "updated": updated, "failed": failed, "errors": errors}
-
+    return {
+        "scanned": scanned,
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "failed": failed,
+        "errors": errors,
+    }

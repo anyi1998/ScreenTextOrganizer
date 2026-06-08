@@ -142,6 +142,27 @@ a {
   flex-direction: column;
 }
 
+.fatal-state {
+  width: min(520px, calc(100% - 32px));
+  margin: auto;
+  padding: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.fatal-state h1 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 22px;
+}
+
+.fatal-state p {
+  margin: 0 0 18px;
+}
+
 /* ---------- Top Bar ---------- */
 .topbar {
   position: sticky;
@@ -395,6 +416,78 @@ button:disabled {
   animation: slideDown 0.25s var(--ease);
 }
 
+/* ---------- Overview ---------- */
+.overview-grid {
+  margin: 14px 28px 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.overview-card {
+  min-height: 98px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overview-card.wide {
+  min-width: 190px;
+}
+
+.overview-card span,
+.overview-card small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.overview-card strong {
+  color: var(--text-primary);
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.overview-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overview-line strong {
+  font-size: 18px;
+}
+
+.mini-meter {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.10);
+}
+
+.mini-meter i {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: var(--accent-gradient);
+  transition: width 0.35s var(--ease);
+}
+
+.suggestion-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* ---------- OCR Progress ---------- */
 .ocr-progress {
   margin: 14px 28px 0;
@@ -609,7 +702,7 @@ tbody tr:nth-child(even):hover {
 
 .ocr-cell p {
   font-family: "Fira Code", ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .ocr-status {
@@ -900,6 +993,7 @@ tbody tr:nth-child(even):hover {
   }
 
   .control-band,
+  .overview-grid,
   .table-wrap,
   .message {
     margin-left: 0;
@@ -919,6 +1013,15 @@ tbody tr:nth-child(even):hover {
 
   .field.compact {
     width: 100%;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+    padding: 0 16px;
+  }
+
+  .overview-card.wide {
+    min-width: 0;
   }
 
   .pager {
@@ -992,6 +1095,12 @@ tbody tr:nth-child(even):hover {
 .settings-field input,
 .settings-field select {
   width: 100%;
+}
+
+.settings-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .settings-field input[readonly] {

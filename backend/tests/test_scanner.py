@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from app.database import connect, json_tags
 from app.services.scanner import scan_directory
 
 
@@ -37,7 +38,54 @@ def test_scan_deduplicates():
         result = scan_directory(tmpdir, recursive=False)
 
     assert result["inserted"] == 0
-    assert result["updated"] == 2
+    assert result["updated"] == 0
+    assert result["unchanged"] == 2
+
+
+def test_scan_resets_ocr_and_analysis_when_file_changes():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        image_path = _make_test_images(Path(tmpdir), 1)[0]
+        scan_directory(tmpdir, recursive=False)
+
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE items
+                SET ocr_text = ?, ocr_confidence = ?, ocr_status = ?,
+                    analysis_source = ?, category = ?, summary = ?,
+                    value_score = ?, keep_suggestion = ?, staleness_risk = ?,
+                    distortion_risk = ?, tags = ?
+                WHERE filename = ?
+                """,
+                (
+                    "old text",
+                    0.95,
+                    "done",
+                    "rules",
+                    "old reason",
+                    "old summary",
+                    5,
+                    "keep",
+                    "old topic",
+                    "high",
+                    json_tags(["old"]),
+                    image_path.name,
+                ),
+            )
+
+        Image.new("RGB", (100, 100), color=(12, 34, 56)).save(image_path)
+        result = scan_directory(tmpdir, recursive=False)
+
+        with connect() as conn:
+            row = conn.execute("SELECT * FROM items WHERE filename = ?", (image_path.name,)).fetchone()
+
+    assert result["updated"] == 1
+    assert row["ocr_text"] == ""
+    assert row["ocr_confidence"] is None
+    assert row["ocr_status"] == "pending"
+    assert row["analysis_source"] is None
+    assert row["summary"] is None
+    assert row["tags"] == "[]"
 
 
 def test_scan_nonexistent_directory_raises():

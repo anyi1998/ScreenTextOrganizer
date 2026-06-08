@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Archive,
@@ -22,9 +22,13 @@ import {
   ZapOff
 } from "lucide-react";
 import {
+  cancelAnalysis,
+  cancelOcr,
   exportUrl,
+  getAnalysisStatus,
   getAIConfig,
   getOcrStatus,
+  getStats,
   healthCheck,
   imageUrl,
   listItems,
@@ -32,11 +36,18 @@ import {
   runOcr,
   saveAIConfig,
   scan,
+  testAIConfig,
   thumbnailUrl,
   trashItem,
   updateItem
 } from "./api";
-import type { AIConfig, HealthInfo, ItemStatus, OcrStatus, PicItem } from "./types";
+import type { AIConfig, AnalyzeResult, HealthInfo, ItemStatus, OcrStatus, PicItem, ScanResult, StatsInfo } from "./types";
+
+const STORAGE_KEYS = {
+  lang: "screenTextOrganizer.lang",
+  pageSize: "screenTextOrganizer.pageSize",
+  directory: "screenTextOrganizer.directory"
+} as const;
 
 /* ── Provider presets ─────────────────────────────────────────────── */
 
@@ -91,7 +102,13 @@ const translations = {
     msgOcrFail: "失败",
     msgNoOcr: "✓ 没有待处理的 OCR 项目",
     msgActionDone: "完成：",
+    msgScanDone: "扫描完成",
+    msgAnalyzeDone: "分析完成",
+    msgAnalysisCancelRequested: "已请求取消分析",
+    msgAnalysisCancelPending: "已请求取消，正在等待当前条目分析完成。",
     msgCopyDone: "✓ 已复制 OCR 文本",
+    msgCopyEmpty: "没有可复制的 OCR 文本",
+    msgUnexpectedError: "应用发生异常，请刷新后重试。",
     confirmTrash: "移入系统回收站？",
     editOcr: "编辑 OCR 文本",
     close: "关闭",
@@ -127,6 +144,25 @@ const translations = {
     providerAI: "在线 AI",
     providerOllama: "Ollama (本地)",
     providerRules: "仅规则",
+    includeImage: "视觉分析",
+    statLibrary: "素材库",
+    statStorage: "占用空间",
+    statReviewQueue: "待复核",
+    statOcrDone: "OCR 完成",
+    statAnalyzed: "已分析",
+    statSuggestions: "整理建议",
+    statPendingOcr: "待 OCR",
+    statFailedOcr: "OCR 失败",
+    suggestionKeep: "保留",
+    suggestionReview: "复核",
+    suggestionDelete: "删除",
+    msgOcrSkipped: "跳过",
+    msgOcrCancelRequested: "已请求取消 OCR",
+    msgOcrCancelPending: "已请求取消，正在等待当前图片处理完成。",
+    clearApiKey: "清除 Key",
+    apiKeyStored: "已保存 API Key；留空保存会继续使用现有 Key。",
+    apiKeyNotStored: "尚未保存 API Key。",
+    apiKeyCleared: "✓ API Key 已清除",
   },
   en: {
     subtitle: "Local screenshot OCR, text organizer and reviewer",
@@ -166,7 +202,13 @@ const translations = {
     msgOcrFail: "Failed",
     msgNoOcr: "✓ No pending OCR items",
     msgActionDone: "Done:",
+    msgScanDone: "Scan completed",
+    msgAnalyzeDone: "Analysis completed",
+    msgAnalysisCancelRequested: "Analysis cancellation requested",
+    msgAnalysisCancelPending: "Cancellation requested; waiting for the current item to finish.",
     msgCopyDone: "✓ Copied OCR text",
+    msgCopyEmpty: "No OCR text to copy",
+    msgUnexpectedError: "The app hit an unexpected error. Refresh and try again.",
     confirmTrash: "Move to system recycle bin?",
     editOcr: "Edit OCR Text",
     close: "Close",
@@ -202,6 +244,25 @@ const translations = {
     providerAI: "Online AI",
     providerOllama: "Ollama (Local)",
     providerRules: "Rules Only",
+    includeImage: "Vision",
+    statLibrary: "Library",
+    statStorage: "Storage",
+    statReviewQueue: "Review Queue",
+    statOcrDone: "OCR Done",
+    statAnalyzed: "Analyzed",
+    statSuggestions: "Suggestions",
+    statPendingOcr: "Pending OCR",
+    statFailedOcr: "OCR Failed",
+    suggestionKeep: "Keep",
+    suggestionReview: "Review",
+    suggestionDelete: "Delete",
+    msgOcrSkipped: "Skipped",
+    msgOcrCancelRequested: "OCR cancellation requested",
+    msgOcrCancelPending: "Cancellation requested; waiting for the current image to finish.",
+    clearApiKey: "Clear Key",
+    apiKeyStored: "API key is saved; leave it blank to keep using the existing key.",
+    apiKeyNotStored: "No API key is saved yet.",
+    apiKeyCleared: "✓ API key cleared",
   },
   ja: {
     subtitle: "ローカルスクリーンショットOCR、テキスト整理・レビューツール",
@@ -241,7 +302,13 @@ const translations = {
     msgOcrFail: "失敗",
     msgNoOcr: "✓ 保留中のOCRアイテムはありません",
     msgActionDone: "完了：",
+    msgScanDone: "スキャン完了",
+    msgAnalyzeDone: "分析完了",
+    msgAnalysisCancelRequested: "分析キャンセルを要求しました",
+    msgAnalysisCancelPending: "キャンセルを要求しました。現在の項目の完了を待っています。",
     msgCopyDone: "✓ OCRテキストをコピーしました",
+    msgCopyEmpty: "コピーできるOCRテキストがありません",
+    msgUnexpectedError: "アプリで予期しないエラーが発生しました。更新して再試行してください。",
     confirmTrash: "ごみ箱に移動しますか？",
     editOcr: "OCRテキストを編集",
     close: "閉じる",
@@ -277,6 +344,25 @@ const translations = {
     providerAI: "オンラインAI",
     providerOllama: "Ollama（ローカル）",
     providerRules: "ルールのみ",
+    includeImage: "画像分析",
+    statLibrary: "ライブラリ",
+    statStorage: "使用容量",
+    statReviewQueue: "レビュー待ち",
+    statOcrDone: "OCR完了",
+    statAnalyzed: "分析済み",
+    statSuggestions: "整理提案",
+    statPendingOcr: "OCR待ち",
+    statFailedOcr: "OCR失敗",
+    suggestionKeep: "保持",
+    suggestionReview: "レビュー",
+    suggestionDelete: "削除",
+    msgOcrSkipped: "スキップ",
+    msgOcrCancelRequested: "OCRキャンセルを要求しました",
+    msgOcrCancelPending: "キャンセルを要求しました。現在の画像処理の完了を待っています。",
+    clearApiKey: "キーを削除",
+    apiKeyStored: "APIキーは保存済みです。空欄で保存すると既存キーを保持します。",
+    apiKeyNotStored: "APIキーはまだ保存されていません。",
+    apiKeyCleared: "✓ APIキーを削除しました",
   },
   de: {
     subtitle: "Lokaler Screenshot OCR, Textorganisator und Reviewer",
@@ -316,7 +402,13 @@ const translations = {
     msgOcrFail: "Fehlgeschlagen",
     msgNoOcr: "✓ Keine ausstehenden OCR-Elemente",
     msgActionDone: "Erledigt:",
+    msgScanDone: "Scan abgeschlossen",
+    msgAnalyzeDone: "Analyse abgeschlossen",
+    msgAnalysisCancelRequested: "Analyse-Abbruch angefordert",
+    msgAnalysisCancelPending: "Abbruch angefordert; warte auf den aktuellen Eintrag.",
     msgCopyDone: "✓ OCR-Text kopiert",
+    msgCopyEmpty: "Kein OCR-Text zum Kopieren",
+    msgUnexpectedError: "In der App ist ein unerwarteter Fehler aufgetreten. Bitte aktualisieren und erneut versuchen.",
     confirmTrash: "In den Papierkorb verschieben?",
     editOcr: "OCR-Text bearbeiten",
     close: "Schließen",
@@ -352,17 +444,36 @@ const translations = {
     providerAI: "Online-KI",
     providerOllama: "Ollama (Lokal)",
     providerRules: "Nur Regeln",
+    includeImage: "Bildanalyse",
+    statLibrary: "Bibliothek",
+    statStorage: "Speicher",
+    statReviewQueue: "Prüfung",
+    statOcrDone: "OCR fertig",
+    statAnalyzed: "Analysiert",
+    statSuggestions: "Vorschläge",
+    statPendingOcr: "OCR offen",
+    statFailedOcr: "OCR Fehler",
+    suggestionKeep: "Behalten",
+    suggestionReview: "Prüfen",
+    suggestionDelete: "Löschen",
+    msgOcrSkipped: "Übersprungen",
+    msgOcrCancelRequested: "OCR-Abbruch angefordert",
+    msgOcrCancelPending: "Abbruch angefordert; warte auf das aktuelle Bild.",
+    clearApiKey: "Key löschen",
+    apiKeyStored: "API-Key ist gespeichert; leer speichern behält den vorhandenen Key.",
+    apiKeyNotStored: "Noch kein API-Key gespeichert.",
+    apiKeyCleared: "✓ API-Key gelöscht",
   }
 };
 
 type LangType = keyof typeof translations;
 
 export function App() {
-  const [lang, setLang] = useState<LangType>("zh");
+  const [lang, setLang] = useState<LangType>(() => readStoredLang());
   const t = translations[lang];
 
-  const [pageSize, setPageSize] = useState(20);
-  const [directory, setDirectory] = useState("");
+  const [pageSize, setPageSize] = useState(() => readStoredPageSize());
+  const [directory, setDirectory] = useState(() => readStorage(STORAGE_KEYS.directory) || "");
   const [recursive, setRecursive] = useState(true);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -370,6 +481,7 @@ export function App() {
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<PicItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<StatsInfo | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [selected, setSelected] = useState<PicItem | null>(null);
@@ -379,14 +491,12 @@ export function App() {
   const [includeImage, setIncludeImage] = useState(false);
   const [ocrProgress, setOcrProgress] = useState<OcrStatus | null>(null);
   const ocrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<AnalyzeResult | null>(null);
+  const analysisPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Health / connection status
   const [healthInfo, setHealthInfo] = useState<HealthInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-
-  useEffect(() => {
-    healthCheck().then(setHealthInfo).catch(() => {});
-  }, []);
 
   const params = useMemo(() => {
     const next = new URLSearchParams({
@@ -405,9 +515,39 @@ export function App() {
     setTotal(data.total);
   }, [params]);
 
+  const loadStats = useCallback(async () => {
+    setStats(await getStats());
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([load(), loadStats()]);
+  }, [load, loadStats]);
+
+  const refreshSystem = useCallback(async () => {
+    const [healthResult, statsResult] = await Promise.allSettled([healthCheck(), getStats()]);
+    if (healthResult.status === "fulfilled") setHealthInfo(healthResult.value);
+    if (statsResult.status === "fulfilled") setStats(statsResult.value);
+  }, []);
+
   useEffect(() => {
-    load().catch((error) => setMessage(error.message));
-  }, [load]);
+    refreshSystem().catch(() => {});
+  }, [refreshSystem]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.lang, lang);
+  }, [lang]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.pageSize, String(pageSize));
+  }, [pageSize]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.directory, directory);
+  }, [directory]);
+
+  useEffect(() => {
+    refreshData().catch((error) => setMessage(error.message));
+  }, [refreshData]);
 
   // Auto-dismiss message after 6s
   useEffect(() => {
@@ -432,10 +572,10 @@ export function App() {
         setOcrProgress(s);
         if (!s.running) {
           stopOcrPoll();
-          setMessage(`${t.msgOcrDone} ${s.processed}，${t.msgOcrFail} ${s.failed}`);
+          setMessage(`${t.msgOcrDone} ${s.processed}，${t.msgOcrFail} ${s.failed}${s.skipped ? `，${t.msgOcrSkipped} ${s.skipped}` : ""}`);
           setOcrProgress(null);
           setBusy("");
-          await load();
+          await refreshData();
         }
       } catch {
         stopOcrPoll();
@@ -443,9 +583,40 @@ export function App() {
         setBusy("");
       }
     }, 1500);
-  }, [stopOcrPoll, load, t]);
+  }, [stopOcrPoll, refreshData, t]);
 
   useEffect(() => stopOcrPoll, [stopOcrPoll]);
+
+  const stopAnalysisPoll = useCallback(() => {
+    if (analysisPollRef.current) {
+      clearInterval(analysisPollRef.current);
+      analysisPollRef.current = null;
+    }
+  }, []);
+
+  const startAnalysisPoll = useCallback(() => {
+    stopAnalysisPoll();
+    analysisPollRef.current = setInterval(async () => {
+      try {
+        const s = await getAnalysisStatus();
+        setAnalysisProgress(s);
+        if (!s.running) {
+          stopAnalysisPoll();
+          setMessage(formatAnalyzeResult(s, t));
+          setAnalysisProgress(null);
+          setBusy("");
+          await refreshData();
+          healthCheck().then(setHealthInfo).catch(() => {});
+        }
+      } catch {
+        stopAnalysisPoll();
+        setAnalysisProgress(null);
+        setBusy("");
+      }
+    }, 1500);
+  }, [stopAnalysisPoll, refreshData, t]);
+
+  useEffect(() => stopAnalysisPoll, [stopAnalysisPoll]);
 
   async function handleOcr() {
     setBusy("OCR");
@@ -465,13 +636,61 @@ export function App() {
     }
   }
 
-  async function runAction(label: string, action: () => Promise<unknown>) {
+  async function handleCancelOcr() {
+    try {
+      const result = await cancelOcr();
+      setOcrProgress(result);
+      if (result.running) {
+        setMessage(t.msgOcrCancelRequested);
+        startOcrPoll();
+      }
+    } catch (error) {
+      setMessage(`✗ ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function handleAnalyze() {
+    setBusy(t.analyze);
+    setMessage("");
+    try {
+      const result = await runAnalysis({
+        provider,
+        include_image: includeImage
+      });
+      if (result.status === "started" || result.status === "already_running") {
+        setAnalysisProgress(result);
+        startAnalysisPoll();
+      } else {
+        setMessage(formatAnalyzeResult(result, t));
+        setBusy("");
+        await refreshData();
+      }
+    } catch (error) {
+      setMessage(`✗ ${error instanceof Error ? error.message : String(error)}`);
+      setBusy("");
+    }
+  }
+
+  async function handleCancelAnalysis() {
+    try {
+      const result = await cancelAnalysis();
+      setAnalysisProgress(result);
+      if (result.running) {
+        setMessage(t.msgAnalysisCancelRequested);
+        startAnalysisPoll();
+      }
+    } catch (error) {
+      setMessage(`✗ ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function runAction(label: string, action: () => Promise<unknown>, formatResult?: (result: unknown) => string) {
     setBusy(label);
     setMessage("");
     try {
       const result = await action();
-      setMessage(`${t.msgActionDone} ${JSON.stringify(result)}`);
-      await load();
+      setMessage(formatResult ? formatResult(result) : `${t.msgActionDone} ${label}`);
+      await refreshData();
       // Refresh health after analysis to update connection status
       healthCheck().then(setHealthInfo).catch(() => {});
     } catch (error) {
@@ -482,6 +701,10 @@ export function App() {
   }
 
   async function copy(text: string) {
+    if (!text) {
+      setMessage(t.msgCopyEmpty);
+      return;
+    }
     await navigator.clipboard.writeText(text || "");
     setMessage(t.msgCopyDone);
   }
@@ -504,33 +727,10 @@ export function App() {
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
-  // Determine AI status combining backend health and local config
-  let aiStatus = "not_configured";
-  try {
-    const isLocalConfigured = !!localStorage.getItem("ai_config");
-    const isLocalAvailable = localStorage.getItem("ai_available") === "true";
-    
-    if (isLocalConfigured) {
-      aiStatus = isLocalAvailable ? "connected" : "error";
-    } else if (healthInfo?.ai_configured) {
-      aiStatus = healthInfo.ai_available ? "connected" : "error";
-    }
-  } catch {
-    if (healthInfo?.ai_configured) {
-      aiStatus = healthInfo.ai_available ? "connected" : "error";
-    }
-  }
-
-  // Get local config for display and execution
-  let currentModel = healthInfo?.ai_model || "";
-  let localConf: any = null;
-  try {
-    const saved = localStorage.getItem("ai_config");
-    if (saved) {
-      localConf = JSON.parse(saved);
-      if (localConf.model) currentModel = localConf.model;
-    }
-  } catch {}
+  const aiStatus = healthInfo?.ai_configured
+    ? healthInfo.ai_available ? "connected" : "error"
+    : "not_configured";
+  const currentModel = healthInfo?.ai_model || "";
 
   return (
     <main className="app-shell">
@@ -605,7 +805,7 @@ export function App() {
           <button
             className="primary-button"
             disabled={!directory || !!busy}
-            onClick={() => runAction(t.scan, () => scan(directory, recursive))}
+            onClick={() => runAction(t.scan, () => scan(directory, recursive), (result) => formatScanResult(result as ScanResult, t))}
           >
             {busy === t.scan ? <Loader2 className="spin" size={16} /> : <ImageIcon size={16} />}
             {t.scan}
@@ -617,17 +817,7 @@ export function App() {
           <button
             className="icon-button text-button"
             disabled={!!busy}
-            onClick={() =>
-              runAction(t.analyze, () =>
-                runAnalysis({ 
-                  provider, 
-                  include_image: includeImage,
-                  ai_api_key: localConf?.api_key,
-                  ai_base_url: localConf?.base_url,
-                  ai_model: localConf?.model
-                })
-              )
-            }
+            onClick={handleAnalyze}
           >
             {busy === t.analyze ? <Loader2 className="spin" size={16} /> : <Archive size={16} />}
             {t.analyze}
@@ -657,13 +847,29 @@ export function App() {
               <option value="rules">{t.providerRules}</option>
             </select>
           </label>
-          <button className="icon-button" title={t.refresh} onClick={() => load()} disabled={!!busy}>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={includeImage}
+              onChange={(event) => setIncludeImage(event.target.checked)}
+            />
+            {t.includeImage}
+          </label>
+          <button className="icon-button" title={t.refresh} onClick={() => refreshData()} disabled={!!busy}>
             <RefreshCw size={16} />
           </button>
         </div>
       </section>
 
-      {ocrProgress && ocrProgress.total > 0 && <OcrProgressBar progress={ocrProgress} t={t} />}
+      {stats && <OverviewStats stats={stats} t={t} />}
+
+      {ocrProgress && ocrProgress.total > 0 && (
+        <OcrProgressBar progress={ocrProgress} t={t} onCancel={handleCancelOcr} />
+      )}
+
+      {analysisProgress && analysisProgress.total > 0 && (
+        <AnalysisProgressBar progress={analysisProgress} t={t} onCancel={handleCancelAnalysis} />
+      )}
 
       {message && <div className="message">{message}</div>}
 
@@ -850,12 +1056,41 @@ export function App() {
           t={t}
           onClose={() => {
             setShowSettings(false);
-            healthCheck().then(setHealthInfo).catch(() => {});
+            refreshSystem().catch(() => {});
           }}
         />
       )}
     </main>
   );
+}
+
+export class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error(error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="app-shell">
+          <section className="fatal-state">
+            <h1>ScreenTextOrganizer</h1>
+            <p>{translations.en.msgUnexpectedError}</p>
+            <button className="primary-button" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </section>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 /* ---------- AI Settings Dialog ---------- */
@@ -865,27 +1100,34 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [savedConfig, setSavedConfig] = useState<AIConfig | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("https://api.deepseek.com");
   const [model, setModel] = useState("deepseek-chat");
   const [presetIdx, setPresetIdx] = useState(0);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("ai_config");
-      if (saved) {
-        const config = JSON.parse(saved);
-        setApiKey(config.api_key || "");
+    let active = true;
+    getAIConfig()
+      .then((config) => {
+        if (!active) return;
+        setSavedConfig(config);
         setBaseUrl(config.base_url || "https://api.deepseek.com");
         setModel(config.model || "deepseek-chat");
         const idx = AI_PRESETS.findIndex(p => p.base_url === config.base_url);
         if (idx >= 0) setPresetIdx(idx);
         else setPresetIdx(AI_PRESETS.length - 1);
-      }
-    } catch {
-      // ignore
-    }
-    setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setTestResult(t.connFail);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   function handlePresetChange(idx: number) {
@@ -898,26 +1140,36 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
   }
 
   async function handleSave() {
-    if (!apiKey && !baseUrl) return;
+    if (!baseUrl || !model) return;
     setSaving(true);
     const conf = { api_key: apiKey, base_url: baseUrl, model: model };
-    localStorage.setItem("ai_config", JSON.stringify(conf));
-    
     try {
-      const { testAIConfig } = await import("./api");
-      const result = await testAIConfig(conf);
-      if (result.ai_available) {
-        localStorage.setItem("ai_available", "true");
-        setTestResult(t.connOk);
-      } else {
-        localStorage.setItem("ai_available", "false");
-        setTestResult(t.connFail);
-      }
-    } catch (err) {
-      localStorage.setItem("ai_available", "false");
+      const result = await saveAIConfig(conf);
+      setApiKey("");
+      const nextConfig = await getAIConfig();
+      setSavedConfig(nextConfig);
+      setTestResult(result.ai_available ? t.connOk : t.connFail);
+    } catch {
       setTestResult(t.connFail);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
+  }
+
+  async function handleClearApiKey() {
+    if (!baseUrl || !model) return;
+    setSaving(true);
+    try {
+      await saveAIConfig({ api_key: "", base_url: baseUrl, model: model, clear_api_key: true });
+      setApiKey("");
+      const nextConfig = await getAIConfig();
+      setSavedConfig(nextConfig);
+      setTestResult(t.apiKeyCleared);
+    } catch {
+      setTestResult(t.connFail);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleTest() {
@@ -925,13 +1177,13 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
     setTestResult(null);
     const conf = { api_key: apiKey, base_url: baseUrl, model: model };
     try {
-      const { testAIConfig } = await import("./api");
       const result = await testAIConfig(conf);
       setTestResult(result.ai_available ? t.connOk : t.connFail);
     } catch {
       setTestResult(t.connFail);
+    } finally {
+      setTesting(false);
     }
-    setTesting(false);
   }
 
   const preset = AI_PRESETS[presetIdx];
@@ -966,9 +1218,12 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
               <input
                 type="password"
                 value={apiKey}
-                placeholder={t.apiKeyPlaceholder}
+                placeholder={savedConfig?.api_key_set ? savedConfig.api_key_masked : t.apiKeyPlaceholder}
                 onChange={(e) => setApiKey(e.target.value)}
               />
+              <small className="settings-help">
+                {savedConfig?.api_key_set ? t.apiKeyStored : t.apiKeyNotStored}
+              </small>
             </label>
 
             <label className="settings-field">
@@ -1003,11 +1258,14 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
         )}
 
         <div className="dialog-actions">
-          <button onClick={handleTest} disabled={testing || !apiKey}>
+          <button onClick={handleClearApiKey} disabled={saving || !savedConfig?.api_key_set}>
+            {t.clearApiKey}
+          </button>
+          <button onClick={handleTest} disabled={testing || (!apiKey && !savedConfig?.api_key_set)}>
             {testing ? <Loader2 className="spin" size={14} /> : null}
             {t.testConn}
           </button>
-          <button className="primary-button" onClick={handleSave} disabled={saving || !apiKey}>
+          <button className="primary-button" onClick={handleSave} disabled={saving || !baseUrl || !model}>
             {saving ? <Loader2 className="spin" size={14} /> : null}
             {t.save}
           </button>
@@ -1019,7 +1277,82 @@ function AISettingsDialog({ t, onClose }: { t: typeof translations["zh"]; onClos
 
 /* ---------- Sub-components ---------- */
 
-function OcrProgressBar({ progress, t }: { progress: OcrStatus, t: typeof translations["zh"] }) {
+function OverviewStats({ stats, t }: { stats: StatsInfo; t: typeof translations["zh"] }) {
+  const percent = (value: number) => (stats.total > 0 ? Math.round((value / stats.total) * 100) : 0);
+  const ocrPercent = percent(stats.done_ocr);
+  const analyzedPercent = percent(stats.analyzed);
+  const totalSuggestions =
+    stats.keep_suggestion_keep + stats.keep_suggestion_review + stats.keep_suggestion_delete;
+
+  return (
+    <section className="overview-grid">
+      <div className="overview-card">
+        <span>{t.statLibrary}</span>
+        <strong>{stats.total}</strong>
+        <small>
+          {t.statStorage} {formatBytes(stats.storage_bytes)}
+        </small>
+      </div>
+      <div className="overview-card">
+        <span>{t.statReviewQueue}</span>
+        <strong>{stats.review_queue}</strong>
+        <small>
+          {t.statPendingOcr} {stats.pending_ocr}
+          {stats.failed_ocr > 0 ? ` / ${t.statFailedOcr} ${stats.failed_ocr}` : ""}
+        </small>
+      </div>
+      <div className="overview-card wide">
+        <div className="overview-line">
+          <span>{t.statOcrDone}</span>
+          <strong>{ocrPercent}%</strong>
+        </div>
+        <div className="mini-meter">
+          <i style={{ width: `${ocrPercent}%` }} />
+        </div>
+        <small>
+          {stats.done_ocr} / {stats.total}
+        </small>
+      </div>
+      <div className="overview-card wide">
+        <div className="overview-line">
+          <span>{t.statAnalyzed}</span>
+          <strong>{analyzedPercent}%</strong>
+        </div>
+        <div className="mini-meter">
+          <i style={{ width: `${analyzedPercent}%` }} />
+        </div>
+        <small>
+          {stats.analyzed} / {stats.total}
+        </small>
+      </div>
+      <div className="overview-card suggestions">
+        <span>{t.statSuggestions}</span>
+        <div className="suggestion-strip">
+          <Badge tone="good">
+            {t.suggestionKeep} {stats.keep_suggestion_keep}
+          </Badge>
+          <Badge tone="warn">
+            {t.suggestionReview} {stats.keep_suggestion_review}
+          </Badge>
+          <Badge tone="bad">
+            {t.suggestionDelete} {stats.keep_suggestion_delete}
+          </Badge>
+        </div>
+        <small>{totalSuggestions} / {stats.total}</small>
+      </div>
+    </section>
+  );
+}
+
+function OcrProgressBar({
+  progress,
+  t,
+  onCancel
+}: {
+  progress: OcrStatus;
+  t: typeof translations["zh"];
+  onCancel: () => void;
+}) {
   const done = progress.processed + progress.failed;
   const pct = progress.total > 0 ? Math.round((done / progress.total) * 100) : 0;
 
@@ -1031,11 +1364,75 @@ function OcrProgressBar({ progress, t }: { progress: OcrStatus, t: typeof transl
           {t.ocrProgress} {done} / {progress.total}
           {progress.failed > 0 && <span className="ocr-progress-fail">（{progress.failed} {t.ocrFail}）</span>}
         </span>
-        <span>{pct}%</span>
+        <span>
+          {pct}%
+          {progress.running && (
+            <button
+              className="icon-button"
+              onClick={onCancel}
+              disabled={progress.cancel_requested}
+              title={t.cancel}
+              aria-label={t.cancel}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </span>
       </div>
       <div className="ocr-progress-track">
         <div className="ocr-progress-fill" style={{ width: `${pct}%` }} />
       </div>
+      {progress.cancel_requested && (
+        <div className="ocr-progress-file">{t.msgOcrCancelPending}</div>
+      )}
+      {progress.current_file && (
+        <div className="ocr-progress-file">{progress.current_file}</div>
+      )}
+    </div>
+  );
+}
+
+function AnalysisProgressBar({
+  progress,
+  t,
+  onCancel
+}: {
+  progress: AnalyzeResult;
+  t: typeof translations["zh"];
+  onCancel: () => void;
+}) {
+  const done = progress.processed + progress.failed;
+  const pct = progress.total > 0 ? Math.round((done / progress.total) * 100) : 0;
+
+  return (
+    <div className="ocr-progress">
+      <div className="ocr-progress-header">
+        <span>
+          <Loader2 className="spin" size={14} />
+          {t.analyze} {done} / {progress.total}
+          {progress.failed > 0 && <span className="ocr-progress-fail">({progress.failed} {t.ocrFail})</span>}
+        </span>
+        <span>
+          {pct}%
+          {progress.running && (
+            <button
+              className="icon-button"
+              onClick={onCancel}
+              disabled={progress.cancel_requested}
+              title={t.cancel}
+              aria-label={t.cancel}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </span>
+      </div>
+      <div className="ocr-progress-track">
+        <div className="ocr-progress-fill" style={{ width: `${pct}%` }} />
+      </div>
+      {progress.cancel_requested && (
+        <div className="ocr-progress-file">{t.msgAnalysisCancelPending}</div>
+      )}
       {progress.current_file && (
         <div className="ocr-progress-file">{progress.current_file}</div>
       )}
@@ -1133,4 +1530,40 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function readStoredLang(): LangType {
+  const value = readStorage(STORAGE_KEYS.lang);
+  return value === "zh" || value === "en" || value === "ja" || value === "de" ? value : "zh";
+}
+
+function readStoredPageSize() {
+  const value = Number(readStorage(STORAGE_KEYS.pageSize));
+  return [10, 20, 50, 100].includes(value) ? value : 20;
+}
+
+function readStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage can be disabled in hardened browser profiles.
+  }
+}
+
+function formatScanResult(result: ScanResult, t: typeof translations["zh"]) {
+  return `${t.msgScanDone}: ${result.scanned} scanned, ${result.inserted} new, ${result.updated} updated, ${result.unchanged} unchanged, ${result.failed} failed`;
+}
+
+function formatAnalyzeResult(result: AnalyzeResult, t: typeof translations["zh"]) {
+  const skipped = result.skipped ? `, skipped ${result.skipped}` : "";
+  const failed = result.failed ? `, failed ${result.failed}` : "";
+  return `${t.msgAnalyzeDone}: ${result.processed}/${result.total}${failed}${skipped}, AI ${result.ai_used}, Ollama ${result.ollama_used}`;
 }

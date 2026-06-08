@@ -25,6 +25,15 @@ Local web tool for reviewing saved screenshots, book excerpts, interview-questio
 - `docs/` research notes and implementation plan.
 - `data/` generated at runtime for SQLite and thumbnails.
 
+### Production-Oriented Capabilities
+- Operational overview: the home view shows library size, review queue, OCR progress, analysis progress, and keep/review/delete distribution from `/api/stats`.
+- Content-aware rescans: unchanged files are left untouched, while changed image files reset stale OCR and analysis data.
+- Cancellable OCR batches: cancellation stops the queue after the current image finishes so database state remains consistent.
+- Cancellable analysis batches: long AI/Ollama analysis runs in a background worker with `/api/analyze/status` and `/api/analyze/cancel`.
+- Backend-managed AI configuration: API keys are saved in `.env`, can be cleared from the UI, and are returned to the browser only as masked metadata.
+- Explicit API contracts: core endpoints use response models for health, scan, OCR status, AI config, analysis runs, trash actions, and stats.
+- Testable runtime isolation: `PIC_TEXT_PULL_DATA_DIR` and `PIC_TEXT_PULL_ENV_PATH` can redirect generated data and config.
+
 ### Quick Start
 
 **Backend:**
@@ -43,6 +52,41 @@ npm install
 npm run dev
 ```
 Open `http://localhost:5173`.
+
+### Configuration
+Copy `.env.example` to `.env`, or configure AI providers in the browser settings dialog.
+
+Important environment variables:
+- `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`: OpenAI-compatible online analysis provider.
+- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: optional local Ollama fallback.
+- `PIC_TEXT_PULL_DATA_DIR`: runtime data directory for SQLite, thumbnails, and model cache.
+- `PIC_TEXT_PULL_ENV_PATH`: config file path used by the backend settings API.
+- `PIC_TEXT_PULL_ENV`: set to `production` for packaged or hosted deployments.
+- `PIC_TEXT_PULL_CORS_ORIGINS`: comma-separated list of frontend origins allowed to call the API.
+- `PIC_TEXT_PULL_SECURITY_HEADERS`: set to `0` only when an upstream proxy already injects equivalent headers.
+
+For production-style local serving, build the frontend first and run only the backend:
+```powershell
+cd frontend
+npm run build
+cd ..\backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+The backend serves `frontend/dist` automatically when it exists. SQLite runs with WAL and a 30s busy timeout so OCR batches and UI reads can coexist more reliably.
+
+### Testing
+Use the backend virtual environment so native OCR and trash dependencies resolve correctly:
+```powershell
+cd backend
+.\.venv\Scripts\python -m pytest -p no:cacheprovider
+```
+
+Build the frontend:
+```powershell
+cd frontend
+npm run build
+```
 
 ### Optional Ollama
 Install Ollama for Windows from the official installer, then pull the recommended lightweight vision model:

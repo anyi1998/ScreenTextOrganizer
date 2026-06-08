@@ -62,7 +62,7 @@ def analyze_with_ai(
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {key}",
     }
 
     req = urllib.request.Request(

@@ -1,4 +1,14 @@
-import type { AIConfig, HealthInfo, ListResponse, OcrStatus, PicItem } from "./types";
+import type {
+  AIConfig,
+  AIConfigUpdate,
+  AnalyzeResult,
+  HealthInfo,
+  ListResponse,
+  OcrStatus,
+  PicItem,
+  ScanResult,
+  StatsInfo
+} from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -8,10 +18,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    throw new Error(await readErrorMessage(res));
   }
   return res.json() as Promise<T>;
+}
+
+async function readErrorMessage(res: Response) {
+  const text = await res.text();
+  if (!text) return `HTTP ${res.status}`;
+  try {
+    const data = JSON.parse(text) as { detail?: unknown; message?: unknown };
+    const detail = data.detail ?? data.message;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((entry) => {
+          if (entry && typeof entry === "object" && "msg" in entry) {
+            return String((entry as { msg: unknown }).msg);
+          }
+          return String(entry);
+        })
+        .join("; ");
+    }
+    if (detail) return JSON.stringify(detail);
+  } catch {
+    // Fall through to the raw response body.
+  }
+  return text;
 }
 
 export function healthCheck() {
@@ -22,14 +55,14 @@ export function getAIConfig() {
   return request<AIConfig>("/api/config/ai");
 }
 
-export function saveAIConfig(config: { api_key: string; base_url: string; model: string }) {
+export function saveAIConfig(config: AIConfigUpdate) {
   return request<{ saved: boolean; ai_available: boolean }>("/api/config/ai", {
     method: "POST",
     body: JSON.stringify(config)
   });
 }
 
-export function testAIConfig(config: { api_key: string; base_url: string; model: string }) {
+export function testAIConfig(config: AIConfigUpdate) {
   return request<{ ai_available: boolean }>("/api/ai/test", {
     method: "POST",
     body: JSON.stringify(config)
@@ -40,8 +73,12 @@ export function listItems(params: URLSearchParams) {
   return request<ListResponse>(`/api/items?${params.toString()}`);
 }
 
+export function getStats() {
+  return request<StatsInfo>("/api/stats");
+}
+
 export function scan(directory: string, recursive: boolean) {
-  return request<Record<string, unknown>>("/api/scan", {
+  return request<ScanResult>("/api/scan", {
     method: "POST",
     body: JSON.stringify({ directory, recursive })
   });
@@ -58,6 +95,10 @@ export function getOcrStatus() {
   return request<OcrStatus>("/api/ocr/status");
 }
 
+export function cancelOcr() {
+  return request<OcrStatus>("/api/ocr/cancel", { method: "POST" });
+}
+
 export function runAnalysis(options: {
   limit?: number;
   provider: string;
@@ -67,7 +108,7 @@ export function runAnalysis(options: {
   ai_base_url?: string;
   ai_model?: string;
 }) {
-  return request<Record<string, number>>("/api/analyze/run", {
+  return request<AnalyzeResult>("/api/analyze/run", {
     method: "POST",
     body: JSON.stringify({
       limit: options.limit || null,
@@ -79,6 +120,14 @@ export function runAnalysis(options: {
       ai_model: options.ai_model || null
     })
   });
+}
+
+export function getAnalysisStatus() {
+  return request<AnalyzeResult>("/api/analyze/status");
+}
+
+export function cancelAnalysis() {
+  return request<AnalyzeResult>("/api/analyze/cancel", { method: "POST" });
 }
 
 export function updateItem(id: number, body: Partial<Pick<PicItem, "status" | "notes" | "ocr_text" | "tags">>) {

@@ -37,17 +37,77 @@ export interface ListResponse {
   page_size: number;
 }
 
-export interface OcrStatus {
-  status: "idle" | "running" | "started" | "already_running";
+export interface ScanError {
+  file: string;
+  error: string;
+}
+
+export interface ScanResult {
+  scanned: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  errors: ScanError[];
+}
+
+export interface AnalyzeResult {
+  status: "idle" | "running" | "started" | "already_running" | "cancelling" | "cancelled";
   running: boolean;
+  cancel_requested: boolean;
   processed: number;
   failed: number;
+  skipped: number;
+  ai_used: number;
+  ollama_used: number;
   total: number;
   current_file: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_error: string | null;
+}
+
+export interface StatsBucket {
+  name: string;
+  count: number;
+}
+
+export interface StatsInfo {
+  total: number;
+  storage_bytes: number;
+  review_queue: number;
+  done_ocr: number;
+  pending_ocr: number;
+  failed_ocr: number;
+  analyzed: number;
+  keep_suggestion_keep: number;
+  keep_suggestion_review: number;
+  keep_suggestion_delete: number;
+  by_status: StatsBucket[];
+  by_ocr_status: StatsBucket[];
+  by_suggestion: StatsBucket[];
+  by_analysis_source: StatsBucket[];
+}
+
+export interface OcrStatus {
+  status: "idle" | "running" | "started" | "already_running" | "cancelling" | "cancelled";
+  running: boolean;
+  cancel_requested: boolean;
+  processed: number;
+  failed: number;
+  skipped: number;
+  total: number;
+  current_file: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_error: string | null;
 }
 
 export interface HealthInfo {
   ok: boolean;
+  environment: string;
+  data_dir: string;
+  database_path: string;
   ollama_available: boolean;
   ollama_models: string[];
   ai_configured: boolean;
@@ -61,4 +121,11 @@ export interface AIConfig {
   api_key_set: boolean;
   base_url: string;
   model: string;
+}
+
+export interface AIConfigUpdate {
+  api_key: string;
+  base_url: string;
+  model: string;
+  clear_api_key?: boolean;
 }

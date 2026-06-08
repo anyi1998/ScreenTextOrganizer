@@ -8,14 +8,30 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from send2trash import send2trash
 
-from .config import AI_API_KEY, AI_BASE_URL, AI_MODEL, DEFAULT_OLLAMA_MODEL, save_ai_config
+from . import config
 from .database import connect, init_db, json_tags, row_to_dict, utc_now
-from .schemas import AIConfigUpdate, AnalyzeRequest, ItemListResponse, ItemUpdate, RunRequest, ScanRequest
+from .schemas import (
+    AIConfigResponse,
+    AIConfigSaveResponse,
+    AIConfigUpdate,
+    AIProviderCheckResponse,
+    AnalyzeRequest,
+    AnalyzeRunResponse,
+    HealthResponse,
+    ItemListResponse,
+    ItemUpdate,
+    OcrStatusResponse,
+    RunRequest,
+    ScanRequest,
+    ScanResponse,
+    StatsResponse,
+    TrashResponse,
+)
 from .services.ai_provider import analyze_with_ai, check_connection, is_configured
 from .services.analyzer import analyze_text_rules, merge_ai_with_rules, to_update_dict
 from .services.ocr import run_ocr
@@ -26,60 +42,157 @@ from .services.scanner import scan_directory
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE items
+            SET ocr_status = 'pending', updated_at = ?
+            WHERE ocr_status = 'running'
+            """,
+            (utc_now(),),
+        )
     yield
 
 
-app = FastAPI(title="ScreenTextOrganizer", lifespan=lifespan)
+app = FastAPI(
+    title="ScreenTextOrganizer",
+    description="Local screenshot OCR and text organization API.",
+    version="0.2.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=list(config.CORS_ORIGINS),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
-_ocr_state: dict = {"running": False, "processed": 0, "failed": 0, "total": 0, "current_file": ""}
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if config.SECURITY_HEADERS_ENABLED:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+_ocr_state: dict[str, object] = {
+    "running": False,
+    "cancel_requested": False,
+    "processed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "total": 0,
+    "current_file": "",
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+}
 _ocr_lock = threading.Lock()
 
+_analysis_state: dict[str, object] = {
+    "running": False,
+    "cancel_requested": False,
+    "processed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "ai_used": 0,
+    "ollama_used": 0,
+    "total": 0,
+    "current_file": "",
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+}
+_analysis_lock = threading.Lock()
 
-@app.get("/api/health")
+
+def _ocr_status_name(state: dict[str, object]) -> str:
+    if state["running"]:
+        return "cancelling" if state["cancel_requested"] else "running"
+    if state["cancel_requested"]:
+        return "cancelled"
+    return "idle"
+
+
+def _ocr_snapshot() -> dict:
+    with _ocr_lock:
+        state = dict(_ocr_state)
+    return {"status": _ocr_status_name(state), **state}
+
+
+def _analysis_status_name(state: dict[str, object]) -> str:
+    if state["running"]:
+        return "cancelling" if state["cancel_requested"] else "running"
+    if state["cancel_requested"]:
+        return "cancelled"
+    return "idle"
+
+
+def _analysis_snapshot() -> dict:
+    with _analysis_lock:
+        state = dict(_analysis_state)
+    return {"status": _analysis_status_name(state), **state}
+
+
+def _mask_api_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "****"
+    return key[:4] + "*" * (len(key) - 8) + key[-4:]
+
+
+def _count_buckets(conn, column: str) -> list[dict[str, object]]:
+    rows = conn.execute(
+        f"""
+        SELECT COALESCE({column}, 'none') AS name, COUNT(*) AS count
+        FROM items
+        GROUP BY COALESCE({column}, 'none')
+        ORDER BY count DESC, name ASC
+        """
+    ).fetchall()
+    return [{"name": row["name"], "count": row["count"]} for row in rows]
+
+
+@app.get("/api/health", response_model=HealthResponse)
 def health() -> dict:
     ollama_info = check_ollama()
     ai_info = check_connection()
     return {
         "ok": True,
+        "environment": config.APP_ENV,
+        "data_dir": str(config.DATA_DIR),
+        "database_path": str(config.DB_PATH),
         "ollama_available": ollama_info["available"],
         "ollama_models": ollama_info.get("models", []),
         "ai_configured": is_configured(),
         "ai_available": ai_info.get("available", False),
-        "ai_model": AI_MODEL,
-        "ai_base_url": AI_BASE_URL,
+        "ai_model": config.AI_MODEL,
+        "ai_base_url": config.AI_BASE_URL,
     }
 
 
-@app.get("/api/config/ai")
+@app.get("/api/config/ai", response_model=AIConfigResponse)
 def get_ai_config() -> dict:
     """Return current AI config (key is masked)."""
-    from .config import AI_API_KEY as key, AI_BASE_URL as url, AI_MODEL as model
-    masked_key = ""
-    if key:
-        if len(key) > 8:
-            masked_key = key[:4] + "*" * (len(key) - 8) + key[-4:]
-        else:
-            masked_key = "****"
     return {
-        "api_key_masked": masked_key,
-        "api_key_set": bool(key and key != "sk-your-api-key-here"),
-        "base_url": url,
-        "model": model,
+        "api_key_masked": _mask_api_key(config.AI_API_KEY),
+        "api_key_set": bool(config.AI_API_KEY and config.AI_API_KEY != "sk-your-api-key-here"),
+        "base_url": config.AI_BASE_URL,
+        "model": config.AI_MODEL,
     }
 
 
-@app.post("/api/config/ai")
+@app.post("/api/config/ai", response_model=AIConfigSaveResponse)
 def update_ai_config(req: AIConfigUpdate) -> dict:
     """Save AI config to .env file."""
-    save_ai_config(req.api_key, req.base_url, req.model)
+    config.save_ai_config(req.api_key, req.base_url, req.model, clear_api_key=req.clear_api_key)
     ai_info = check_connection()
     return {
         "saved": True,
@@ -88,7 +201,7 @@ def update_ai_config(req: AIConfigUpdate) -> dict:
     }
 
 
-@app.post("/api/ai/test")
+@app.post("/api/ai/test", response_model=AIProviderCheckResponse)
 def test_ai_config(req: AIConfigUpdate) -> dict:
     """Test AI config without saving it."""
     ai_info = check_connection(api_key=req.api_key, base_url=req.base_url, model=req.model)
@@ -98,7 +211,7 @@ def test_ai_config(req: AIConfigUpdate) -> dict:
     }
 
 
-@app.post("/api/scan")
+@app.post("/api/scan", response_model=ScanResponse)
 def scan(req: ScanRequest) -> dict:
     try:
         return scan_directory(req.directory, req.recursive)
@@ -110,10 +223,10 @@ def scan(req: ScanRequest) -> dict:
 def list_items(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=30, ge=1, le=200),
-    status: str | None = None,
-    category: str | None = None,
-    suggestion: str | None = None,
-    q: str | None = None,
+    status: Literal["unreviewed", "kept", "review", "trashed"] | None = None,
+    category: str | None = Query(default=None, max_length=80),
+    suggestion: Literal["keep", "review", "delete"] | None = None,
+    q: str | None = Query(default=None, max_length=200),
 ) -> dict:
     filters: list[str] = []
     params: list[object] = []
@@ -147,41 +260,94 @@ def list_items(
     return {"items": [row_to_dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
 
+@app.get("/api/stats", response_model=StatsResponse)
+def stats() -> dict:
+    with connect() as conn:
+        totals = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(file_size), 0) AS storage_bytes,
+                SUM(CASE WHEN status = 'review' OR keep_suggestion = 'review' THEN 1 ELSE 0 END) AS review_queue,
+                SUM(CASE WHEN ocr_status = 'done' THEN 1 ELSE 0 END) AS done_ocr,
+                SUM(CASE WHEN ocr_status IN ('pending', 'running') THEN 1 ELSE 0 END) AS pending_ocr,
+                SUM(CASE WHEN ocr_status = 'failed' THEN 1 ELSE 0 END) AS failed_ocr,
+                SUM(CASE WHEN analysis_source IS NOT NULL THEN 1 ELSE 0 END) AS analyzed,
+                SUM(CASE WHEN keep_suggestion = 'keep' THEN 1 ELSE 0 END) AS keep_suggestion_keep,
+                SUM(CASE WHEN keep_suggestion = 'review' THEN 1 ELSE 0 END) AS keep_suggestion_review,
+                SUM(CASE WHEN keep_suggestion = 'delete' THEN 1 ELSE 0 END) AS keep_suggestion_delete
+            FROM items
+            """
+        ).fetchone()
+        return {
+            "total": totals["total"] or 0,
+            "storage_bytes": totals["storage_bytes"] or 0,
+            "review_queue": totals["review_queue"] or 0,
+            "done_ocr": totals["done_ocr"] or 0,
+            "pending_ocr": totals["pending_ocr"] or 0,
+            "failed_ocr": totals["failed_ocr"] or 0,
+            "analyzed": totals["analyzed"] or 0,
+            "keep_suggestion_keep": totals["keep_suggestion_keep"] or 0,
+            "keep_suggestion_review": totals["keep_suggestion_review"] or 0,
+            "keep_suggestion_delete": totals["keep_suggestion_delete"] or 0,
+            "by_status": _count_buckets(conn, "status"),
+            "by_ocr_status": _count_buckets(conn, "ocr_status"),
+            "by_suggestion": _count_buckets(conn, "keep_suggestion"),
+            "by_analysis_source": _count_buckets(conn, "analysis_source"),
+        }
+
+
 def _ocr_worker(rows: list[dict]) -> None:
-    global _ocr_state
-    for row in rows:
-        now = utc_now()
-        with connect() as conn:
-            conn.execute("UPDATE items SET ocr_status = ?, updated_at = ? WHERE id = ?", ("running", now, row["id"]))
+    try:
+        for index, row in enumerate(rows):
+            with _ocr_lock:
+                if _ocr_state["cancel_requested"]:
+                    _ocr_state["skipped"] = int(_ocr_state["skipped"]) + len(rows) - index
+                    break
+                _ocr_state["current_file"] = row.get("filename", "")
+
+            now = utc_now()
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE items SET ocr_status = ?, updated_at = ? WHERE id = ?",
+                    ("running", now, row["id"]),
+                )
+
+            try:
+                text, confidence = run_ocr(row["source_path"])
+                with connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE items
+                        SET ocr_text = ?, ocr_confidence = ?, ocr_status = ?,
+                            ocr_error = NULL, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (text, confidence, "done", utc_now(), row["id"]),
+                    )
+                with _ocr_lock:
+                    _ocr_state["processed"] = int(_ocr_state["processed"]) + 1
+            except Exception as exc:
+                with connect() as conn:
+                    conn.execute(
+                        "UPDATE items SET ocr_status = ?, ocr_error = ?, updated_at = ? WHERE id = ?",
+                        ("failed", str(exc), utc_now(), row["id"]),
+                    )
+                with _ocr_lock:
+                    _ocr_state["failed"] = int(_ocr_state["failed"]) + 1
+                    _ocr_state["last_error"] = str(exc)
+    finally:
         with _ocr_lock:
-            _ocr_state["current_file"] = row.get("filename", "")
-        try:
-            text, confidence = run_ocr(row["source_path"])
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE items SET ocr_text = ?, ocr_confidence = ?, ocr_status = ?, ocr_error = NULL, updated_at = ? WHERE id = ?",
-                    (text, confidence, "done", utc_now(), row["id"]),
-                )
-            with _ocr_lock:
-                _ocr_state["processed"] += 1
-        except Exception as exc:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE items SET ocr_status = ?, ocr_error = ?, updated_at = ? WHERE id = ?",
-                    ("failed", str(exc), utc_now(), row["id"]),
-                )
-            with _ocr_lock:
-                _ocr_state["failed"] += 1
-    with _ocr_lock:
-        _ocr_state["running"] = False
-        _ocr_state["current_file"] = ""
+            _ocr_state["running"] = False
+            _ocr_state["current_file"] = ""
+            _ocr_state["finished_at"] = utc_now()
 
 
-@app.post("/api/ocr/run")
+@app.post("/api/ocr/run", response_model=OcrStatusResponse)
 def run_ocr_batch(req: RunRequest) -> dict:
     with _ocr_lock:
         if _ocr_state["running"]:
-            return {"status": "already_running", **_ocr_state}
+            return {"status": "already_running", **dict(_ocr_state)}
 
     with connect() as conn:
         sql = "SELECT id, source_path, filename FROM items WHERE ocr_status IN ('pending', 'failed') AND status != 'trashed' ORDER BY id"
@@ -192,27 +358,162 @@ def run_ocr_batch(req: RunRequest) -> dict:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
     if not rows:
-        return {"status": "idle", "processed": 0, "failed": 0, "total": 0, "current_file": ""}
+        with _ocr_lock:
+            _ocr_state.update(
+                {
+                    "running": False,
+                    "cancel_requested": False,
+                    "processed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "total": 0,
+                    "current_file": "",
+                    "started_at": None,
+                    "finished_at": utc_now(),
+                    "last_error": None,
+                }
+            )
+        return _ocr_snapshot()
 
     with _ocr_lock:
-        _ocr_state.update({"running": True, "processed": 0, "failed": 0, "total": len(rows), "current_file": ""})
+        _ocr_state.update(
+            {
+                "running": True,
+                "cancel_requested": False,
+                "processed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "total": len(rows),
+                "current_file": "",
+                "started_at": utc_now(),
+                "finished_at": None,
+                "last_error": None,
+            }
+        )
 
     thread = threading.Thread(target=_ocr_worker, args=(rows,), daemon=True)
     thread.start()
-    return {"status": "started", **_ocr_state}
-
-
-@app.get("/api/ocr/status")
-def ocr_status() -> dict:
     with _ocr_lock:
-        return {"status": "running" if _ocr_state["running"] else "idle", **_ocr_state}
+        return {"status": "started", **dict(_ocr_state)}
 
 
-@app.post("/api/analyze/run")
+@app.get("/api/ocr/status", response_model=OcrStatusResponse)
+def ocr_status() -> dict:
+    return _ocr_snapshot()
+
+
+@app.post("/api/ocr/cancel", response_model=OcrStatusResponse)
+def cancel_ocr() -> dict:
+    with _ocr_lock:
+        if _ocr_state["running"]:
+            _ocr_state["cancel_requested"] = True
+    return _ocr_snapshot()
+
+
+def _analyze_one(row: dict, req: AnalyzeRequest, ai_available: bool, ollama_available: bool) -> tuple[int, int]:
+    rules_result = analyze_text_rules(row["ocr_text"])
+    result = None
+    ai_used = 0
+    ollama_used = 0
+    provider = req.provider
+
+    if provider == "auto":
+        if ai_available:
+            provider = "ai"
+        elif ollama_available:
+            provider = "ollama"
+        else:
+            provider = "rules"
+
+    if provider == "ai" and ai_available:
+        ai_result = analyze_with_ai(
+            row["ocr_text"],
+            api_key=req.ai_api_key,
+            base_url=req.ai_base_url,
+            model=req.ai_model,
+        )
+        if ai_result:
+            result = merge_ai_with_rules(ai_result, rules_result)
+            ai_used = 1
+
+    if result is None and provider in ("ai", "ollama", "auto") and ollama_available:
+        ollama_result = analyze_with_ollama(
+            row["ocr_text"],
+            image_path=row["source_path"],
+            include_image=req.include_image,
+            model=req.model,
+        )
+        if ollama_result:
+            result = merge_ai_with_rules(ollama_result, rules_result)
+            ollama_used = 1
+
+    if result is None:
+        result = rules_result
+
+    update = to_update_dict(result)
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE items
+            SET analysis_source = ?, category = ?, summary = ?, value_score = ?,
+                keep_suggestion = ?, staleness_risk = ?, distortion_risk = ?,
+                tags = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                update["analysis_source"],
+                update["category"],
+                update["summary"],
+                update["value_score"],
+                update["keep_suggestion"],
+                update["staleness_risk"],
+                update["distortion_risk"],
+                update["tags"],
+                utc_now(),
+                row["id"],
+            ),
+        )
+    return ai_used, ollama_used
+
+
+def _analysis_worker(rows: list[dict], req: AnalyzeRequest) -> None:
+    ai_available = is_configured() or bool(req.ai_api_key)
+    ollama_available = check_ollama()["available"]
+
+    try:
+        for index, row in enumerate(rows):
+            with _analysis_lock:
+                if _analysis_state["cancel_requested"]:
+                    _analysis_state["skipped"] = int(_analysis_state["skipped"]) + len(rows) - index
+                    break
+                _analysis_state["current_file"] = row.get("filename", "")
+
+            try:
+                ai_used, ollama_used = _analyze_one(row, req, ai_available, ollama_available)
+                with _analysis_lock:
+                    _analysis_state["processed"] = int(_analysis_state["processed"]) + 1
+                    _analysis_state["ai_used"] = int(_analysis_state["ai_used"]) + ai_used
+                    _analysis_state["ollama_used"] = int(_analysis_state["ollama_used"]) + ollama_used
+            except Exception as exc:
+                with _analysis_lock:
+                    _analysis_state["failed"] = int(_analysis_state["failed"]) + 1
+                    _analysis_state["last_error"] = str(exc)
+    finally:
+        with _analysis_lock:
+            _analysis_state["running"] = False
+            _analysis_state["current_file"] = ""
+            _analysis_state["finished_at"] = utc_now()
+
+
+@app.post("/api/analyze/run", response_model=AnalyzeRunResponse)
 def run_analysis(req: AnalyzeRequest) -> dict:
+    with _analysis_lock:
+        if _analysis_state["running"]:
+            return {"status": "already_running", **dict(_analysis_state)}
+
     with connect() as conn:
         sql = """
-            SELECT id, source_path, ocr_text
+            SELECT id, source_path, filename, ocr_text
             FROM items
             WHERE status != 'trashed' AND COALESCE(ocr_text, '') != ''
             ORDER BY id
@@ -221,84 +522,63 @@ def run_analysis(req: AnalyzeRequest) -> dict:
         if req.limit:
             sql += " LIMIT ?"
             params.append(req.limit)
-        rows = conn.execute(sql, params).fetchall()
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-    processed = 0
-    ai_used = 0
-    ollama_used = 0
-
-    # Determine available providers
-    env_configured = is_configured()
-    ai_available = env_configured or bool(req.ai_api_key)
-    ollama_info = check_ollama()
-    ollama_available = ollama_info["available"]
-
-    for row in rows:
-        rules_result = analyze_text_rules(row["ocr_text"])
-        result = None
-
-        # Try providers based on preference
-        provider = req.provider
-
-        if provider == "auto":
-            # Auto: try AI first, then Ollama, then rules
-            if ai_available:
-                provider = "ai"
-            elif ollama_available:
-                provider = "ollama"
-            else:
-                provider = "rules"
-
-        if provider == "ai" and ai_available:
-            ai_result = analyze_with_ai(
-                row["ocr_text"],
-                api_key=req.ai_api_key,
-                base_url=req.ai_base_url,
-                model=req.ai_model,
+    if not rows:
+        with _analysis_lock:
+            _analysis_state.update(
+                {
+                    "running": False,
+                    "cancel_requested": False,
+                    "processed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "ai_used": 0,
+                    "ollama_used": 0,
+                    "total": 0,
+                    "current_file": "",
+                    "started_at": None,
+                    "finished_at": utc_now(),
+                    "last_error": None,
+                }
             )
-            if ai_result:
-                result = merge_ai_with_rules(ai_result, rules_result)
-                ai_used += 1
+        return _analysis_snapshot()
 
-        if result is None and provider in ("ai", "ollama", "auto") and ollama_available:
-            ollama_result = analyze_with_ollama(
-                row["ocr_text"],
-                image_path=row["source_path"],
-                include_image=req.include_image,
-                model=req.model,
-            )
-            if ollama_result:
-                result = merge_ai_with_rules(ollama_result, rules_result)
-                ollama_used += 1
+    with _analysis_lock:
+        _analysis_state.update(
+            {
+                "running": True,
+                "cancel_requested": False,
+                "processed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "ai_used": 0,
+                "ollama_used": 0,
+                "total": len(rows),
+                "current_file": "",
+                "started_at": utc_now(),
+                "finished_at": None,
+                "last_error": None,
+            }
+        )
 
-        if result is None:
-            result = rules_result
+    thread = threading.Thread(target=_analysis_worker, args=(rows, req), daemon=True)
+    thread.start()
+    with _analysis_lock:
+        return {"status": "started", **dict(_analysis_state)}
 
-        update = to_update_dict(result)
-        with connect() as conn:
-            conn.execute(
-                """
-                UPDATE items
-                SET analysis_source = ?, category = ?, summary = ?, value_score = ?,
-                    keep_suggestion = ?, staleness_risk = ?, distortion_risk = ?,
-                    tags = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    update["analysis_source"],
-                    update["category"],
-                    update["summary"],
-                    update["value_score"],
-                    update["keep_suggestion"],
-                    update["staleness_risk"],
-                    update["distortion_risk"],
-                    update["tags"],
-                    utc_now(),
-                    row["id"],
-                ),
-            )
-        processed += 1
-    return {"processed": processed, "ai_used": ai_used, "ollama_used": ollama_used, "total": len(rows)}
+
+@app.get("/api/analyze/status", response_model=AnalyzeRunResponse)
+def analysis_status() -> dict:
+    return _analysis_snapshot()
+
+
+@app.post("/api/analyze/cancel", response_model=AnalyzeRunResponse)
+def cancel_analysis() -> dict:
+    with _analysis_lock:
+        if _analysis_state["running"]:
+            _analysis_state["cancel_requested"] = True
+    return _analysis_snapshot()
 
 
 @app.patch("/api/items/{item_id}")
@@ -314,6 +594,17 @@ def update_item(item_id: int, update: ItemUpdate) -> dict:
     if update.ocr_text is not None:
         fields.append("ocr_text = ?")
         params.append(update.ocr_text)
+        fields.extend(
+            [
+                "analysis_source = NULL",
+                "category = NULL",
+                "summary = NULL",
+                "value_score = NULL",
+                "keep_suggestion = NULL",
+                "staleness_risk = NULL",
+                "distortion_risk = NULL",
+            ]
+        )
     if update.tags is not None:
         fields.append("tags = ?")
         params.append(json_tags(update.tags))
@@ -331,7 +622,7 @@ def update_item(item_id: int, update: ItemUpdate) -> dict:
     return row_to_dict(row)
 
 
-@app.post("/api/items/{item_id}/trash")
+@app.post("/api/items/{item_id}/trash", response_model=TrashResponse)
 def trash_item(item_id: int) -> dict:
     with connect() as conn:
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()

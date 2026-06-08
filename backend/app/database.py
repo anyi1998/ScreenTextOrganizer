@@ -54,13 +54,18 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status ON items(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_items_ocr_status ON items(ocr_status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_items_category ON items(category)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_keep_suggestion ON items(keep_suggestion)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at)")
 
 
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     ensure_runtime_dirs()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     try:
         yield conn
         conn.commit()
@@ -85,4 +90,3 @@ def json_tags(tags: list[str] | None) -> str:
 
 def normalize_path(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
-
