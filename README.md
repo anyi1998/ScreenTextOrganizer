@@ -17,7 +17,7 @@ Local web tool for reviewing saved screenshots, book excerpts, interview-questio
 4. Run local rule analysis, optionally enhanced by Ollama.
 5. Review items in a browser table.
 6. Copy text, edit OCR output, keep, mark for review, or move source images to the Windows recycle bin.
-7. Export JSON or CSV.
+7. Export JSON, CSV, or Markdown for Obsidian-style note archives.
 
 ### Project Layout
 - `backend/` FastAPI backend and SQLite storage.
@@ -32,6 +32,7 @@ Local web tool for reviewing saved screenshots, book excerpts, interview-questio
 - Cancellable analysis batches: long AI/Ollama analysis runs in a background worker with `/api/analyze/status` and `/api/analyze/cancel`.
 - Unified task coordination: `/api/tasks/status` reports active background work and OCR/analysis batches are mutually exclusive to avoid model and database contention.
 - Backend-managed AI configuration: API keys are saved in `.env`, can be cleared from the UI, and are returned to the browser only as masked metadata.
+- Knowledge-base friendly exports: JSON and CSV support raw data portability, while Markdown export creates Obsidian-ready review notes with metadata, summaries, tags, OCR text, and notes.
 - Explicit API contracts: core endpoints use response models for health, scan, OCR status, AI config, analysis runs, trash actions, and stats.
 - Testable runtime isolation: `PIC_TEXT_PULL_DATA_DIR` and `PIC_TEXT_PULL_ENV_PATH` can redirect generated data and config.
 

@@ -154,6 +154,6 @@ export function thumbnailUrl(id: number) {
   return `${API_BASE}/api/items/${id}/thumbnail`;
 }
 
-export function exportUrl(format: "json" | "csv") {
+export function exportUrl(format: "json" | "csv" | "markdown") {
   return `${API_BASE}/api/export?format=${format}`;
 }

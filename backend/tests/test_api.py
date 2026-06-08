@@ -177,6 +177,52 @@ def test_export_csv():
     assert "text/csv" in res.headers["content-type"]
 
 
+def test_export_markdown():
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO items (
+                source_path, filename, file_hash, file_size, ocr_text, ocr_status,
+                analysis_source, category, summary, value_score, keep_suggestion,
+                staleness_risk, distortion_risk, tags, notes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "C:\\img\\markdown.png",
+                "markdown.png",
+                "hash-markdown",
+                100,
+                "OCR text with `code`",
+                "done",
+                "rules",
+                "Docs",
+                "Useful note",
+                8,
+                "keep",
+                "low",
+                "low",
+                json.dumps(["Obsidian", "export"]),
+                "Review later",
+                now,
+                now,
+            ),
+        )
+
+    with TestClient(app) as client:
+        res = client.get("/api/export?format=markdown")
+
+    assert res.status_code == 200
+    assert "text/markdown" in res.headers["content-type"]
+    assert res.headers["content-disposition"] == "attachment; filename=pic-text-pull.md"
+    assert "# ScreenTextOrganizer Export" in res.text
+    assert "## markdown.png" in res.text
+    assert "| Suggestion | keep |" in res.text
+    assert "| Tags | Obsidian, export |" in res.text
+    assert "```text\nOCR text with `code`\n```" in res.text
+
+
 def test_update_nonexistent_item():
     with TestClient(app) as client:
         res = client.patch("/api/items/99999", json={"status": "kept"})

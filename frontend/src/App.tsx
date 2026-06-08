@@ -98,6 +98,7 @@ const translations = {
     reason: "理由",
     exportJson: "导出 JSON",
     exportCsv: "导出 CSV",
+    exportMarkdown: "导出 Markdown",
     perPage: "每页显示",
     msgOcrDone: "✓ OCR 完成：已处理",
     msgOcrFail: "失败",
@@ -198,6 +199,7 @@ const translations = {
     reason: "Reason",
     exportJson: "Export JSON",
     exportCsv: "Export CSV",
+    exportMarkdown: "Export Markdown",
     perPage: "Per Page",
     msgOcrDone: "✓ OCR Done: Processed",
     msgOcrFail: "Failed",
@@ -298,6 +300,7 @@ const translations = {
     reason: "理由",
     exportJson: "JSON出力",
     exportCsv: "CSV出力",
+    exportMarkdown: "Markdown出力",
     perPage: "表示件数",
     msgOcrDone: "✓ OCR完了：処理済み",
     msgOcrFail: "失敗",
@@ -398,6 +401,7 @@ const translations = {
     reason: "Grund",
     exportJson: "JSON Export",
     exportCsv: "CSV Export",
+    exportMarkdown: "Markdown Export",
     perPage: "Pro Seite",
     msgOcrDone: "✓ OCR Fertig: Verarbeitet",
     msgOcrFail: "Fehlgeschlagen",
@@ -802,6 +806,9 @@ export function App() {
           </a>
           <a className="icon-button text-button" href={exportUrl("csv")} title={t.exportCsv}>
             <Download size={15} /> CSV
+          </a>
+          <a className="icon-button text-button" href={exportUrl("markdown")} title={t.exportMarkdown}>
+            <Download size={15} /> MD
           </a>
         </div>
       </header>

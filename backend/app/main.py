@@ -696,8 +696,90 @@ def get_thumbnail(item_id: int) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg")
 
 
+def _markdown_inline(value: object) -> str:
+    if value is None:
+        return "-"
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return "-"
+    return text.replace("|", "\\|").replace("\n", "<br>")
+
+
+def _markdown_heading(value: object) -> str:
+    text = str(value or "Untitled").replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+    return text or "Untitled"
+
+
+def _markdown_code_block(text: object) -> str:
+    content = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not content:
+        return "_No text._"
+
+    longest_backtick_run = 0
+    current_run = 0
+    for char in content:
+        if char == "`":
+            current_run += 1
+            longest_backtick_run = max(longest_backtick_run, current_run)
+        else:
+            current_run = 0
+    fence = "`" * max(3, longest_backtick_run + 1)
+    return f"{fence}text\n{content}\n{fence}"
+
+
+def _render_markdown_export(rows: list[dict]) -> str:
+    lines = [
+        "# ScreenTextOrganizer Export",
+        "",
+        f"- Generated: {utc_now()}",
+        f"- Items: {len(rows)}",
+        "",
+    ]
+
+    for row in rows:
+        tags = row.get("tags") or []
+        if not isinstance(tags, list):
+            tags = []
+        tag_text = ", ".join(str(tag) for tag in tags) if tags else "-"
+        score = row.get("value_score")
+
+        lines.extend(
+            [
+                f"## {_markdown_heading(row.get('filename'))}",
+                "",
+                "| Field | Value |",
+                "| --- | --- |",
+                f"| ID | {_markdown_inline(row.get('id'))} |",
+                f"| Source | {_markdown_inline(row.get('source_path'))} |",
+                f"| Status | {_markdown_inline(row.get('status'))} |",
+                f"| OCR Status | {_markdown_inline(row.get('ocr_status'))} |",
+                f"| Suggestion | {_markdown_inline(row.get('keep_suggestion'))} |",
+                f"| Score | {_markdown_inline(score if score is not None else '-')} |",
+                f"| Category | {_markdown_inline(row.get('category'))} |",
+                f"| Staleness Risk | {_markdown_inline(row.get('staleness_risk'))} |",
+                f"| Distortion Risk | {_markdown_inline(row.get('distortion_risk'))} |",
+                f"| Tags | {_markdown_inline(tag_text)} |",
+                "",
+                "### Summary",
+                "",
+                _markdown_inline(row.get("summary")),
+                "",
+                "### OCR Text",
+                "",
+                _markdown_code_block(row.get("ocr_text")),
+                "",
+            ]
+        )
+
+        notes = str(row.get("notes") or "").strip()
+        if notes:
+            lines.extend(["### Notes", "", _markdown_code_block(notes), ""])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 @app.get("/api/export")
-def export_items(format: Literal["json", "csv"] = "json") -> Response:
+def export_items(format: Literal["json", "csv", "markdown"] = "json") -> Response:
     with connect() as conn:
         rows = [row_to_dict(row) for row in conn.execute("SELECT * FROM items ORDER BY id").fetchall()]
 
@@ -706,6 +788,13 @@ def export_items(format: Literal["json", "csv"] = "json") -> Response:
             json.dumps(rows, ensure_ascii=False, indent=2),
             media_type="application/json; charset=utf-8",
             headers={"Content-Disposition": "attachment; filename=pic-text-pull.json"},
+        )
+
+    if format == "markdown":
+        return Response(
+            _render_markdown_export(rows),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=pic-text-pull.md"},
         )
 
     buffer = io.StringIO()
